@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wazuh lab dashboard</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f6f4; --card: #ffffff; --line: #e2e2dd; --line-strong: #cfcfc7;
+    --ink: #1c1c1a; --ink-soft: #6a6a63; --ink-faint: #93938b;
+    --accent: #0f6e56; --accent-soft: #e1f5ee;
+    --warn: #854f0b; --warn-soft: #faeeda;
+    --danger: #a32d2d; --danger-soft: #fcebeb;
+    --info: #185fa5;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #191917; --card: #232320; --line: #33332e; --line-strong: #45453e;
+      --ink: #edece7; --ink-soft: #a8a79f; --ink-faint: #7d7c74;
+      --accent: #5dcaa5; --accent-soft: #10342b;
+      --warn: #efa733; --warn-soft: #38280d;
+      --danger: #f09595; --danger-soft: #3d1616;
+      --info: #85b7eb;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto; background: var(--bg); color: var(--ink); max-width: 1180px; padding: 20px;
+    font: 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+  }
+  h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  h3 { font-size: 12px; font-weight: 600; margin: 0 0 10px; text-transform: uppercase;
+       letter-spacing: .06em; color: var(--ink-faint); }
+  .topbar { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+  .spacer { flex: 1; }
+  .muted { color: var(--ink-soft); }
+  .faint { color: var(--ink-faint); font-size: 12px; }
+
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+           padding: 14px 16px; margin-bottom: 14px; }
+  .hostbar { display: flex; gap: 22px; flex-wrap: wrap; align-items: center; }
+  .metric { display: flex; flex-direction: column; gap: 1px; }
+  .metric .k { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-faint); }
+  .metric .v { font-size: 15px; font-variant-numeric: tabular-nums; }
+
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 15px 16px; }
+  .card h2 { font-size: 14px; font-weight: 600; margin: 0; }
+  .cardhead { display: flex; align-items: center; gap: 9px; }
+  .role { color: var(--ink-soft); font-size: 12.5px; margin-bottom: 12px; }
+
+  .pill { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px;
+          border: 1px solid transparent; white-space: nowrap; }
+  .pill.on   { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .pill.off  { background: transparent; color: var(--ink-faint); border-color: var(--line-strong); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+  .pill.busy { background: transparent; color: var(--info); border-color: var(--info); }
+
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 12px 0; }
+  .stats .k { font-size: 11px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .05em; }
+  .stats .v { font-size: 15px; font-variant-numeric: tabular-nums; }
+
+  .probes { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; margin-bottom: 12px; min-height: 18px; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
+  .dot.up { background: var(--accent); } .dot.down { background: var(--ink-faint); }
+  .dot.bad { background: var(--danger); }
+
+  .svcgrid { display: grid; gap: 8px 18px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  /* Advanced adds two buttons per row, so the columns need more room or unit names wrap. */
+  body.adv .svcgrid { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
+  .svc { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; }
+  .svc .unit { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; white-space: nowrap; }
+  .svc .state { color: var(--ink-soft); font-size: 12px; }
+  .svc .grow { flex: 1; }
+  .svcbtns { display: none; gap: 5px; }
+  body.adv .svcbtns { display: flex; }
+
+  table.alerts { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.alerts th { text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase;
+                    letter-spacing: .05em; color: var(--ink-faint); padding: 0 10px 6px 0; }
+  table.alerts td { padding: 4px 10px 4px 0; border-top: 1px solid var(--line); vertical-align: top; }
+  table.alerts td.t, table.alerts td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .lvl { font-weight: 600; }
+  .lvl.hi { color: var(--danger); }
+  .scroller { max-height: 440px; overflow-y: auto; }
+  .panelhead { display: flex; align-items: baseline; gap: 9px; }
+  .panelhead h3 { margin-bottom: 10px; }
+  select { font: inherit; font-size: 12px; padding: 3px 7px; border-radius: 6px;
+           border: 1px solid var(--line-strong); background: var(--card); color: var(--ink); cursor: pointer; }
+
+  .actions { display: flex; gap: 7px; flex-wrap: wrap; }
+  button { font: inherit; font-size: 12.5px; padding: 6px 12px; border-radius: 7px;
+           border: 1px solid var(--line-strong); background: var(--card); color: var(--ink); cursor: pointer; }
+  button.mini { font-size: 11.5px; padding: 3px 8px; }
+  button:hover:not(:disabled) { border-color: var(--ink-soft); }
+  button:disabled { opacity: .38; cursor: not-allowed; }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  button.danger:hover:not(:disabled) { background: var(--danger-soft); }
+  button.primary { border-color: var(--accent); color: var(--accent); }
+  button.primary:hover:not(:disabled) { background: var(--accent-soft); }
+  button.toggle[aria-pressed="true"] { border-color: var(--info); color: var(--info); }
+
+  .flag { font-size: 12px; background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn);
+          border-radius: 7px; padding: 6px 10px; margin-bottom: 11px; }
+  .advonly { display: none; }
+  body.adv .advonly { display: block; }
+  .advrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 9px; }
+
+  #notices { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+  .notice { font-size: 12.5px; padding: 7px 11px; border-radius: 7px; border: 1px solid var(--line-strong); background: var(--card); }
+  .notice.error { border-color: var(--danger); color: var(--danger); background: var(--danger-soft); }
+  footer { margin-top: 20px; font-size: 12px; color: var(--ink-faint); line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Wazuh lab dashboard</h1>
+  <span id="clock" class="faint"></span>
+  <span class="spacer"></span>
+  <button type="button" class="toggle" id="advToggle" aria-pressed="false">Advanced</button>
+  <button type="button" id="pause">Pause</button>
+</div>
+
+<div id="banner"></div>
+
+<div class="panel hostbar" id="hostbar"><span class="muted">Connecting...</span></div>
+
+<div class="panel">
+  <h3>Lab health</h3>
+  <div id="health"><span class="faint">Waiting for the manager.</span></div>
+</div>
+
+<div class="panel">
+  <div class="panelhead">
+    <h3>Recent alerts</h3>
+    <span class="faint" id="alertMeta"></span>
+    <span class="spacer"></span>
+    <label class="faint" for="alertCount">show</label>
+    <select id="alertCount">
+      <option value="5">5</option>
+      <option value="10">10</option>
+      <option value="15">15</option>
+      <option value="25">25</option>
+      <option value="50" selected>50</option>
+    </select>
+  </div>
+  <div class="scroller" id="alerts"><span class="faint">Waiting for the manager.</span></div>
+</div>
+
+<h3>Virtual machines</h3>
+<div class="grid" id="grid"></div>
+
+<div class="panel advonly" style="margin-top:14px">
+  <h3>Lab actions</h3>
+  <div class="advrow">
+    <button type="button" id="lockAutostart">Lock: never autostart</button>
+    <span class="faint">Sets all three VMs to never start with the host. It cannot enable autostart.</span>
+  </div>
+  <div class="advrow">
+    <button type="button" class="danger" id="shutdownAll">Shut down all VMs</button>
+    <span class="faint">Graceful guest shutdown on every running lab VM.</span>
+  </div>
+  <div class="advrow">
+    <button type="button" class="danger" id="quit">Stop dashboard</button>
+    <span class="faint">Closes the server. The VMs are left exactly as they are.</span>
+  </div>
+</div>
+
+<div id="notices"></div>
+
+<footer>
+  Serving on 127.0.0.1 only. Opening this page performs no action: every change needs a click.<br>
+  This is a monitor, not the way the lab is built. Follow the deployment guide for that.
+</footer>
+
+<script>
+const TOKEN = "__LAB_TOKEN__";
+const POLL_MS = 3000;
+const BUSY_STATES = ["Starting", "Stopping", "Saving", "Pausing", "Resuming", "Reset", "FastSaving"];
+
+let timer = null, paused = false;
+const pending = {};
+
+function api(path, body) {
+  return fetch(path, {
+    method: body ? "POST" : "GET",
+    headers: { "X-Lab-Token": TOKEN, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined
+  }).then(r => r.json());
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function note(text, kind) {
+  const box = document.getElementById("notices");
+  const el = document.createElement("div");
+  el.className = "notice" + (kind === "error" ? " error" : "");
+  el.textContent = text;
+  box.prepend(el);
+  setTimeout(() => el.remove(), 9000);
+}
+
+function pillClass(state) {
+  if (state === "Running") return "on";
+  if (state === "Off" || state === "Not found") return "off";
+  if (BUSY_STATES.indexOf(state) >= 0) return "busy";
+  return "warn";
+}
+
+function renderHealth(health) {
+  const box = document.getElementById("health");
+  if (!health) { box.innerHTML = `<span class="faint">The manager is not running, so there is nothing to report.</span>`; return; }
+  if (!health.reachable) { box.innerHTML = `<span class="faint">${esc(health.note)}</span>`; return; }
+
+  const svc = (health.services || []).map(s => {
+    const good = s.state === "active";
+    return `<div class="svc">
+      <span class="dot ${good ? "up" : "bad"}"></span>
+      <span class="unit">${esc(s.unit)}</span>
+      <span class="state">${esc(s.state)}</span>
+      <span class="grow"></span>
+      <span class="svcbtns">
+        <button type="button" class="mini" data-svc="WAZUH-MANAGER" data-unit="${esc(s.unit)}" data-act="restart">Restart</button>
+        <button type="button" class="mini" data-svc="WAZUH-MANAGER" data-unit="${esc(s.unit)}" data-act="${good ? "stop" : "start"}">${good ? "Stop" : "Start"}</button>
+      </span>
+    </div>`;
+  }).join("");
+
+  const agents = (health.agents || []).map(a => {
+    const good = /active/i.test(a.status || "");
+    // The agent's own service lives on the endpoint, so only offer control where we can reach it.
+    const vm = a.name === "wazuh-linux" ? "WAZUH-LINUX" : null;
+    return `<div class="svc">
+      <span class="dot ${good ? "up" : "bad"}"></span>
+      <span class="unit">${esc(a.name || ("agent " + a.id))}</span>
+      <span class="state">${esc(a.status)}</span>
+      <span class="grow"></span>
+      ${vm ? `<span class="svcbtns">
+        <button type="button" class="mini" data-svc="${vm}" data-unit="wazuh-agent" data-act="restart">Restart agent</button>
+      </span>` : ``}
+    </div>`;
+  }).join("");
+
+  box.innerHTML = `<div class="svcgrid">${svc}${agents}</div>`;
+}
+
+function alertLimit() {
+  const v = parseInt(document.getElementById("alertCount").value, 10);
+  return isNaN(v) ? 50 : v;
+}
+
+function renderAlerts(health) {
+  const box = document.getElementById("alerts");
+  const meta = document.getElementById("alertMeta");
+  if (!health || !health.reachable) { meta.textContent = ""; box.innerHTML = `<span class="faint">Waiting for the manager.</span>`; return; }
+  const all = health.alerts || [];
+  if (!all.length) { meta.textContent = ""; box.innerHTML = `<span class="faint">No alerts recorded yet.</span>`; return; }
+  // The manager always sends the newest 50, so narrowing this is a slice, not another round trip.
+  const rows = all.slice(0, alertLimit());
+  meta.textContent = "newest " + rows.length + " of " + all.length;
+  box.innerHTML = `<table class="alerts">
+    <thead><tr><th>Time</th><th>Agent</th><th>Rule</th><th>Level</th><th>Description</th><th>Technique</th></tr></thead>
+    <tbody>${rows.map(a => `<tr>
+      <td class="t">${esc(a.time)}</td>
+      <td>${esc(a.agent)}</td>
+      <td class="n">${esc(a.id)}</td>
+      <td class="n"><span class="lvl ${Number(a.level) >= 10 ? "hi" : ""}">${esc(a.level)}</span></td>
+      <td>${esc(a.desc)}</td>
+      <td>${esc(a.tech)}</td>
+    </tr>`).join("")}</tbody></table>`;
+}
+
+function render(data) {
+  // Kept so the alert count dropdown can redraw immediately instead of waiting for a poll.
+  window.__last = data;
+  document.getElementById("clock").textContent = "updated " + data.now + (paused ? " (paused)" : "");
+
+  document.getElementById("banner").innerHTML = data.elevated ? "" :
+    `<div class="flag" style="margin-bottom:14px">Running without administrator rights. Hyper-V will not report or
+      control the VMs in this mode. Close this window, launch "Lab dashboard.cmd" again, and accept the
+      elevation prompt.</div>`;
+
+  const h = data.host;
+  document.getElementById("hostbar").innerHTML =
+    `<div class="metric"><span class="k">Host CPU</span><span class="v">${h.cpuPercent}%</span></div>
+     <div class="metric"><span class="k">Host memory</span><span class="v">${h.memUsedGb} / ${h.memTotalGb} GB</span></div>
+     <div class="metric"><span class="k">Lab is using</span><span class="v">${data.labMemoryGb} GB</span></div>
+     ${h.disks.map(d => `<div class="metric"><span class="k">${d.name} free</span><span class="v">${d.freeGb} GB</span></div>`).join("")}`;
+
+  renderHealth(data.health);
+  renderAlerts(data.health);
+
+  document.getElementById("grid").innerHTML = data.vms.map(vm => {
+    if (!vm.found) {
+      const denied = vm.state === "Needs administrator";
+      return `<div class="card"><div class="cardhead"><h2>${esc(vm.name)}</h2>
+        <span class="pill ${denied ? "warn" : "off"}">${esc(vm.state)}</span></div>
+        <div class="role">${esc(vm.role)} &middot; ${esc(vm.address)}</div>
+        <div class="faint">${denied
+          ? "Hyper-V will not report this VM without administrator rights."
+          : "This VM does not exist on this host."}</div></div>`;
+    }
+    const busy = BUSY_STATES.indexOf(vm.state) >= 0;
+    const running = vm.state === "Running";
+    const isPending = pending[vm.name] && (Date.now() - pending[vm.name].at < 45000) && pending[vm.name].from === vm.state;
+    const lock = busy || isPending;
+
+    const probes = vm.probes && vm.probes.length
+      ? vm.probes.map(p => `<span><span class="dot ${p.open ? "up" : "down"}"></span>${esc(p.label)} ${p.open ? "ok" : "no answer"}</span>`).join("")
+      : `<span class="faint">no inbound ports to check</span>`;
+
+    const flag = vm.autostartOk ? "" :
+      `<div class="flag">Autostart is set to "${esc(vm.autostart)}". This VM could start with the host. Use Advanced to lock it off.</div>`;
+
+    return `<div class="card">
+      <div class="cardhead">
+        <h2>${esc(vm.name)}</h2>
+        <span class="pill ${pillClass(vm.state)}">${isPending ? "working" : esc(vm.state)}</span>
+      </div>
+      <div class="role">${esc(vm.role)} &middot; ${esc(vm.address)}</div>
+      ${flag}
+      <div class="stats">
+        <div><div class="k">CPU</div><div class="v">${running ? vm.cpuPercent + "%" : "&mdash;"}</div></div>
+        <div><div class="k">Memory</div><div class="v">${running ? vm.memoryGb + " GB" : vm.configuredGb + " GB"}</div></div>
+        <div><div class="k">Uptime</div><div class="v">${vm.uptime || "&mdash;"}</div></div>
+      </div>
+      <div class="probes">${running ? probes : `<span class="faint">${vm.state === "Off" ? "powered off" : "not running"}</span>`}</div>
+      <div class="actions">
+        <button type="button" class="primary" data-vm="${esc(vm.name)}" data-act="start"    ${running || lock ? "disabled" : ""}>Start</button>
+        <button type="button"                 data-vm="${esc(vm.name)}" data-act="shutdown" ${!running || lock ? "disabled" : ""}>Shut down</button>
+        <button type="button"                 data-vm="${esc(vm.name)}" data-act="restart"  ${!running || lock ? "disabled" : ""}>Restart</button>
+        <button type="button" class="danger"  data-vm="${esc(vm.name)}" data-act="forceoff" ${!running || lock ? "disabled" : ""}>Force off</button>
+      </div>
+    </div>`;
+  }).join("");
+
+  (data.notices || []).forEach(n => {
+    if (!window.__seen) window.__seen = {};
+    if (window.__seen[n.at]) return;
+    window.__seen[n.at] = true;
+    note(n.text, n.kind);
+  });
+}
+
+function refresh() {
+  return api("/api/state").then(render).catch(() => {
+    document.getElementById("hostbar").innerHTML =
+      `<span class="muted">No answer from the dashboard server. The window that launched it may have closed.</span>`;
+  });
+}
+
+document.addEventListener("click", ev => {
+  const vmBtn = ev.target.closest("button[data-vm]");
+  if (vmBtn) {
+    const vm = vmBtn.dataset.vm, act = vmBtn.dataset.act;
+    if (act === "forceoff" && !confirm(
+        `Force off ${vm}?\n\nThis cuts power without letting the guest shut down, the same as pulling the plug. ` +
+        `On the manager that risks damaging the indexer's data. Use "Shut down" unless the VM is unresponsive.`)) return;
+    const card = vmBtn.closest(".card");
+    pending[vm] = { at: Date.now(), from: card.querySelector(".pill").textContent };
+    card.querySelectorAll("button").forEach(b => b.disabled = true);
+    api("/api/action", { vm: vm, action: act })
+      .then(r => { note(r.ok ? r.message : r.error, r.ok ? "" : "error"); refresh(); })
+      .catch(() => note("Could not reach the dashboard server.", "error"));
+    return;
+  }
+  const svcBtn = ev.target.closest("button[data-svc]");
+  if (svcBtn) {
+    const { svc, unit, act } = svcBtn.dataset;
+    if (act === "stop" && !confirm(`Stop ${unit} on ${svc}?\n\nDetection stops until it is started again.`)) return;
+    svcBtn.disabled = true;
+    api("/api/service", { vm: svc, unit: unit, action: act })
+      .then(r => { note(r.ok ? r.message : r.error, r.ok ? "" : "error"); refresh(); })
+      .catch(() => note("Could not reach the dashboard server.", "error"));
+  }
+});
+
+const adv = document.getElementById("advToggle");
+function setAdvanced(on) {
+  document.body.classList.toggle("adv", on);
+  adv.setAttribute("aria-pressed", on ? "true" : "false");
+  try { localStorage.setItem("labAdvanced", on ? "1" : "0"); } catch (e) { }
+}
+adv.addEventListener("click", () => setAdvanced(!document.body.classList.contains("adv")));
+try { setAdvanced(localStorage.getItem("labAdvanced") === "1"); } catch (e) { setAdvanced(false); }
+
+const alertCount = document.getElementById("alertCount");
+alertCount.addEventListener("change", () => {
+  try { localStorage.setItem("labAlertCount", alertCount.value); } catch (e) { }
+  if (window.__last) renderAlerts(window.__last.health);
+});
+try {
+  const saved = localStorage.getItem("labAlertCount");
+  if (saved && alertCount.querySelector('option[value="' + saved + '"]')) { alertCount.value = saved; }
+} catch (e) { }
+
+document.getElementById("pause").addEventListener("click", () => {
+  paused = !paused;
+  document.getElementById("pause").textContent = paused ? "Resume" : "Pause";
+  schedule();
+});
+
+document.getElementById("lockAutostart").addEventListener("click", () => {
+  api("/api/lock-autostart", {}).then(r => { note(r.message || r.error, r.ok ? "" : "error"); refresh(); });
+});
+
+document.getElementById("shutdownAll").addEventListener("click", () => {
+  if (!confirm("Shut down every running lab VM?\n\nEach guest is asked to shut down cleanly.")) return;
+  api("/api/state").then(data => {
+    const running = data.vms.filter(v => v.found && v.state === "Running");
+    if (!running.length) { note("No lab VMs are running."); return; }
+    running.forEach(v => { pending[v.name] = { at: Date.now(), from: "Running" }; });
+    Promise.all(running.map(v => api("/api/action", { vm: v.name, action: "shutdown" })))
+      .then(() => { note("Shutdown requested on " + running.length + " VM(s)."); refresh(); });
+  });
+});
+
+document.getElementById("quit").addEventListener("click", () => {
+  if (!confirm("Stop the dashboard server?\n\nThe VMs keep running exactly as they are.")) return;
+  api("/api/quit", {}).then(() => {
+    clearTimeout(timer);
+    document.body.innerHTML = '<p style="padding:26px;font:14px ui-sans-serif,system-ui,sans-serif">Dashboard stopped. You can close this tab.</p>';
+  });
+});
+
+// Polling stops entirely while the tab is hidden, so leaving this open in a background tab costs
+// nothing at all. It picks up again the moment you look at it.
+function schedule() {
+  clearTimeout(timer);
+  if (paused || document.hidden) return;
+  timer = setTimeout(() => refresh().then(schedule), POLL_MS);
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && !paused) { refresh().then(schedule); } else { clearTimeout(timer); }
+});
+
+refresh().then(schedule);
+</script>
+</body>
+</html>

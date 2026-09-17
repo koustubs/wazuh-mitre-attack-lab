@@ -1,0 +1,70 @@
+<!-- Wazuh 4.14.7. Install beside, not over, the vendor rules. -->
+<group name="wazuh_lab,">
+  <!-- Narrow the built-in 4625 rule to bad passwords for known accounts. -->
+  <rule id="100100" level="3">
+    <if_sid>60122</if_sid>
+    <field name="win.system.eventID">^4625$</field>
+    <field name="win.eventdata.subStatus" type="pcre2">(?i)^0xc000006a$</field>
+    <field name="win.eventdata.targetUserName" type="pcre2">\S+</field>
+    <description>Windows: incorrect password for $(win.eventdata.targetUserName)</description>
+    <group>lab_s1_windows_seed,</group>
+  </rule>
+  <rule id="100101" level="10" frequency="6" timeframe="120">
+    <if_matched_sid>100100</if_matched_sid>
+    <same_field>win.eventdata.targetUserName</same_field>
+    <same_field>win.eventdata.targetDomainName</same_field>
+    <description>Windows: repeated incorrect passwords for $(win.eventdata.targetDomainName)\$(win.eventdata.targetUserName)</description>
+    <mitre><id>T1110.001</id></mitre>
+    <group>lab_s1,</group>
+  </rule>
+  <rule id="100102" level="6">
+    <if_sid>60109</if_sid>
+    <field name="win.system.eventID">^4720$</field>
+    <description>Windows: account $(win.eventdata.targetUserName) created by $(win.eventdata.subjectUserName)</description>
+    <mitre><id>T1136.001</id></mitre>
+    <group>lab_s2,</group>
+  </rule>
+  <rule id="100103" level="6">
+    <if_sid>60228</if_sid>
+    <description>Windows: scheduled task $(win.eventdata.taskName) created by $(win.eventdata.subjectUserName)</description>
+    <mitre><id>T1053.005</id></mitre>
+    <group>lab_s3,</group>
+  </rule>
+
+  <!-- Same endpoint is implicit: global_frequency is deliberately absent. -->
+  <!-- Parent is 5760, not 5716. A "Failed password" event matches 5760, which is itself a
+       child of 5716 (if_sid 5700,5716), so a rule hung off 5716 never fires. -->
+  <rule id="100110" level="3">
+    <if_sid>5760</if_sid>
+    <match type="pcre2">^Failed password for (?!invalid user )</match>
+    <description>Linux: incorrect SSH password for $(dstuser)</description>
+    <group>lab_s1_linux_seed,</group>
+  </rule>
+  <!-- Built-in rule 5763 already covers SSH brute force, so this rule needs a reason to exist.
+       5763 is frequency 8 / timeframe 120 / same_source_ip, mapped to the parent technique
+       T1110. It answers "many failures from one source", which includes spraying across
+       accounts. S1 in step 2 is password guessing against a single account, so this rule also
+       requires same_user and maps to T1110.001. Keep both; they detect different behaviour. -->
+  <rule id="100111" level="10" frequency="6" timeframe="120">
+    <if_matched_sid>100110</if_matched_sid>
+    <same_user />
+    <same_srcip />
+    <description>Linux: repeated incorrect SSH passwords for $(dstuser) from $(srcip)</description>
+    <mitre><id>T1110.001</id></mitre>
+    <group>lab_s1,</group>
+  </rule>
+  <rule id="100112" level="6">
+    <if_sid>5902</if_sid>
+    <description>Linux: local account created; review useradd and audit evidence</description>
+    <mitre><id>T1136.001</id></mitre>
+    <group>lab_s2,</group>
+  </rule>
+  <!-- FIM identifies a scheduling-path change, not the intent or execution. -->
+  <rule id="100113" level="6">
+    <if_sid>550,554</if_sid>
+    <field name="file" type="pcre2">^(/etc/crontab$|/etc/cron\.(d|hourly|daily|weekly|monthly)/|/var/spool/cron/crontabs/)</field>
+    <description>Linux: cron path added or modified: $(file); review content and audit evidence</description>
+    <mitre><id>T1053.003</id></mitre>
+    <group>lab_s3,</group>
+  </rule>
+</group>
