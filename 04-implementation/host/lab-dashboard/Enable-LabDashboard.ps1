@@ -1,21 +1,29 @@
 #requires -Version 5.1
 <#
-One-time setup so the dashboard can read lab health and control Wazuh services without ever
-holding a password.
+One-time setup that lets the dashboard read the inside of the lab, and trigger scenarios, without
+ever holding a password.
 
-Three things are installed:
+The dashboard works before this runs. It reads Wazuh service state over SSH with no special
+rights at all, and reports the rest as "not readable yet" rather than showing an empty panel.
+What this adds is everything that needs root on the far side:
 
-1. /usr/local/bin/lab-dashboard-status on the manager. One command that returns service state,
-   agent connection state and recent alerts as JSON, so the dashboard makes one SSH round trip
-   per cycle instead of several.
+  Manager
+    - labadmin joins the wazuh group, which is what makes the alert log and ossec.log readable.
+      Reading alerts is the main thing the dashboard does and it should not need root to do it.
+    - a sudoers rule permitting exactly systemctl start, stop and restart on the four Wazuh
+      units, agent_control -l, and the indexer summary below. Nothing else.
+    - /usr/local/bin/lab-dashboard-indexer, which reports cluster health, alert document count
+      and retention policy state. It authenticates to the indexer with the admin certificate,
+      so no password is read, stored or transmitted anywhere.
 
-2. Membership of the "wazuh" group for labadmin, which is what makes the alert log readable
-   without sudo. Reading alerts is the main thing the dashboard does, so it should not need
-   elevated rights to do it.
+  Linux endpoint
+    - labadmin joins the wazuh group.
+    - a sudoers rule permitting systemctl on wazuh-agent, and the six exact scenario runs.
+    - invoke-scenario.sh installed to a stable path, with a wrapper that accepts only the six
+      valid scenario and mode combinations.
 
-3. A sudoers drop-in permitting exactly systemctl start, stop and restart against the named
-   Wazuh units, plus agent_control -l. Nothing else. It is validated with visudo before being
-   installed, and nothing is written if validation fails.
+Every sudoers file is checked with visudo before it is installed, and nothing is written if that
+check fails, because a broken sudoers file locks you out of sudo entirely.
 
 Run this once after the lab is built. It asks for the lab account's sudo password, uses it for
 this run only, and stores nothing.
@@ -32,6 +40,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $keyPath = (Resolve-Path (Join-Path $PSScriptRoot '..\.lab-secrets\lab_ed25519')).Path
 if (-not (Test-Path -LiteralPath $keyPath)) { throw "Cannot find the lab SSH key at $keyPath" }
+$scenarioPath = (Resolve-Path (Join-Path $PSScriptRoot '..\..\linux\invoke-scenario.sh')).Path
 
 # Windows OpenSSH refuses a private key that other accounts can read. The key lives in a repo
 # folder, so tighten it here rather than leaving people to decode "UNPROTECTED PRIVATE KEY FILE".
@@ -64,13 +73,97 @@ else
   UNITS="wazuh-agent"
 fi
 
-# 1. Read access to the alert log, without sudo.
+# 1. Read access to the alert log and ossec.log, without sudo.
 if getent group wazuh >/dev/null 2>&1; then
   usermod -aG wazuh "$SUDO_USER"
   echo "  added $SUDO_USER to the wazuh group"
 fi
 
-# 2. A narrow sudoers rule, validated before it is installed. An invalid file here would break
+# 2. The helper scripts, before the sudoers rule that names them, so a rule never points at
+#    something that is not there.
+if [ "$ROLE" = "manager" ]; then
+  cat > /usr/local/bin/lab-dashboard-indexer <<'INDEXER'
+#!/usr/bin/env python3
+# Cluster health, alert volume and retention policy state, as one JSON document.
+#
+# Authenticates with the indexer's admin certificate rather than the admin password. The
+# password sits in a root-owned install log and there is no reason to read it, copy it, or risk
+# it appearing in a process list. The certificate never leaves this machine either.
+import json, subprocess
+
+CERTS = '/etc/wazuh-indexer/certs'
+
+def query(path):
+    try:
+        r = subprocess.run(
+            ['curl', '-s', '--max-time', '8', '-k',
+             '--cert', CERTS + '/admin.pem', '--key', CERTS + '/admin-key.pem',
+             'https://127.0.0.1:9200' + path],
+            capture_output=True, text=True, timeout=12)
+        if r.returncode != 0:
+            return None
+        return json.loads(r.stdout)
+    except Exception:
+        return None
+
+out = {}
+
+health = query('/_cluster/health')
+if isinstance(health, dict):
+    out['status'] = health.get('status')
+    out['nodes'] = health.get('number_of_nodes')
+
+indices = query('/_cat/indices/wazuh-alerts-*?format=json&bytes=b')
+if isinstance(indices, list):
+    docs = 0
+    size = 0
+    for i in indices:
+        try:
+            docs += int(i.get('docs.count') or 0)
+            size += int(i.get('store.size') or 0)
+        except Exception:
+            pass
+    out['indices'] = len(indices)
+    out['docs'] = docs
+    out['storeMb'] = round(size / 1048576.0, 1)
+
+# Retention is not something Wazuh ships, so an index with no policy attached is a real finding
+# rather than a cosmetic one: it means the disk fills eventually.
+explain = query('/_plugins/_ism/explain/wazuh-alerts-*')
+if isinstance(explain, dict):
+    policies = set()
+    for key, value in explain.items():
+        if isinstance(value, dict) and value.get('index.plugins.index_state_management.policy_id'):
+            policies.add(value['index.plugins.index_state_management.policy_id'])
+    if policies:
+        out['retention'] = ', '.join(sorted(policies))
+    elif out.get('indices'):
+        out['retention'] = 'none attached'
+
+print(json.dumps(out))
+INDEXER
+  chmod 0755 /usr/local/bin/lab-dashboard-indexer
+  echo "  installed /usr/local/bin/lab-dashboard-indexer"
+fi
+
+if [ "$ROLE" = "endpoint" ] && [ -f /tmp/lab-invoke-scenario.sh ]; then
+  # /tmp does not survive, and the dashboard needs a path it can rely on.
+  mkdir -p /usr/local/lib/wazuh-lab
+  install -o root -g root -m 0755 /tmp/lab-invoke-scenario.sh /usr/local/lib/wazuh-lab/invoke-scenario.sh
+  rm -f /tmp/lab-invoke-scenario.sh
+  cat > /usr/local/bin/lab-scenario <<'SCENARIO'
+#!/bin/sh
+# Thin wrapper so sudoers can name six exact commands instead of a script plus free arguments.
+set -eu
+case "${1:-}" in S1|S2|S3) ;; *) echo 'Usage: lab-scenario S1|S2|S3 test|comparison' >&2; exit 2;; esac
+case "${2:-}" in test|comparison) ;; *) echo 'Usage: lab-scenario S1|S2|S3 test|comparison' >&2; exit 2;; esac
+exec /bin/bash /usr/local/lib/wazuh-lab/invoke-scenario.sh "$1" "$2"
+SCENARIO
+  chmod 0755 /usr/local/bin/lab-scenario
+  echo "  installed /usr/local/bin/lab-scenario"
+fi
+
+# 3. A narrow sudoers rule, validated before it is installed. An invalid file here would break
 #    sudo entirely, so this never writes to /etc/sudoers.d without visudo agreeing first.
 TMP=$(mktemp)
 {
@@ -84,8 +177,21 @@ TMP=$(mktemp)
   done
   printf '\n'
   if [ "$ROLE" = "manager" ]; then
-    printf 'Cmnd_Alias WAZUH_LAB_READ = /var/ossec/bin/agent_control -l\n'
+    printf 'Cmnd_Alias WAZUH_LAB_READ = /var/ossec/bin/agent_control -l, /usr/local/bin/lab-dashboard-indexer\n'
     printf '%s ALL=(root) NOPASSWD: WAZUH_LAB_SVC, WAZUH_LAB_READ\n' "$SUDO_USER"
+  elif [ -x /usr/local/bin/lab-scenario ]; then
+    # Six exact invocations, arguments included. Not a wildcard: these scripts deliberately
+    # create accounts and cron entries, so the grant says precisely which runs are permitted.
+    printf 'Cmnd_Alias WAZUH_LAB_SCENARIO = '
+    first=1
+    for s in S1 S2 S3; do
+      for m in test comparison; do
+        if [ $first -eq 1 ]; then first=0; else printf ', '; fi
+        printf '/usr/local/bin/lab-scenario %s %s' "$s" "$m"
+      done
+    done
+    printf '\n'
+    printf '%s ALL=(root) NOPASSWD: WAZUH_LAB_SVC, WAZUH_LAB_SCENARIO\n' "$SUDO_USER"
   else
     printf '%s ALL=(root) NOPASSWD: WAZUH_LAB_SVC\n' "$SUDO_USER"
   fi
@@ -101,78 +207,9 @@ else
 fi
 rm -f "$TMP"
 
-# 3. The status command, manager only.
-if [ "$ROLE" = "manager" ]; then
-  cat > /usr/local/bin/lab-dashboard-status <<'INNER'
-#!/bin/sh
-python3 - <<'PY'
-import json, os, subprocess
-
-def unit_state(u):
-    try:
-        r = subprocess.run(['systemctl', 'is-active', u], capture_output=True, text=True, timeout=5)
-        return (r.stdout or '').strip() or 'unknown'
-    except Exception:
-        return 'unknown'
-
-services = [{'unit': u, 'state': unit_state(u)}
-            for u in ('wazuh-manager', 'wazuh-indexer', 'wazuh-dashboard', 'filebeat')]
-
-agents = []
-try:
-    out = subprocess.run(['sudo', '-n', '/var/ossec/bin/agent_control', '-l'],
-                         capture_output=True, text=True, timeout=10).stdout
-    for line in out.splitlines():
-        line = line.strip()
-        if not line.startswith('ID:'):
-            continue
-        parts = [p.strip() for p in line.split(',')]
-        info = {}
-        for p in parts:
-            if ':' in p:
-                k, v = p.split(':', 1)
-                info[k.strip().lower()] = v.strip()
-        # The connection state is the trailing field, which carries no label.
-        agents.append({'id': info.get('id', ''), 'name': info.get('name', ''),
-                       'status': parts[-1] if parts and ':' not in parts[-1] else 'unknown'})
-except Exception:
-    pass
-
-alerts = []
-try:
-    path = '/var/ossec/logs/alerts/alerts.json'
-    with open(path, 'rb') as fh:
-        fh.seek(0, os.SEEK_END)
-        size = fh.tell()
-        fh.seek(max(0, size - 300000))
-        lines = fh.read().decode('utf-8', 'replace').splitlines()
-    for line in lines[-500:]:
-        try:
-            a = json.loads(line)
-        except Exception:
-            continue
-        rule = a.get('rule', {}) or {}
-        mitre = rule.get('mitre', {}) or {}
-        alerts.append({
-            'time':  (a.get('timestamp') or '')[11:19],
-            'agent': (a.get('agent', {}) or {}).get('name', ''),
-            'id':    rule.get('id', ''),
-            'level': rule.get('level', ''),
-            'desc':  (rule.get('description') or '')[:110],
-            'tech':  ', '.join(mitre.get('technique', []) or []),
-        })
-    # Always return 50, newest first. The page decides how many of them to show, so changing
-    # that is instant and costs no extra round trip.
-    alerts = alerts[-50:][::-1]
-except Exception:
-    pass
-
-print(json.dumps({'services': services, 'agents': agents, 'alerts': alerts}))
-PY
-INNER
-  chmod 0755 /usr/local/bin/lab-dashboard-status
-  echo "  installed /usr/local/bin/lab-dashboard-status"
-fi
+# An older version of this script installed a status collector on the manager. It is sent over
+# the wire now, so a stale copy left behind would only be confusing.
+rm -f /usr/local/bin/lab-dashboard-status
 '@
 
 function Invoke-Setup {
@@ -183,6 +220,10 @@ function Invoke-Setup {
     # LF only. CRLF in a shell script fails in ways that are miserable to diagnose.
     [IO.File]::WriteAllText($localFile, ($setupScript -replace "`r`n", "`n"), (New-Object Text.UTF8Encoding $false))
     try {
+        if ($Role -eq 'endpoint') {
+            & scp.exe @sshCommon $scenarioPath ("{0}@{1}:/tmp/lab-invoke-scenario.sh" -f $User, $Address) 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Could not copy the scenario driver to $Address." }
+        }
         & scp.exe @sshCommon $localFile ("{0}@{1}:/tmp/lab-dashboard-setup.sh" -f $User, $Address) 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "Could not copy the setup script to $Address." }
         $remote = 'sudo -S -p "" sh /tmp/lab-dashboard-setup.sh {0}; rc=$?; rm -f /tmp/lab-dashboard-setup.sh; exit $rc' -f $Role
@@ -198,15 +239,20 @@ Invoke-Setup -Address $ManagerAddress -Role 'manager'
 Invoke-Setup -Address $LinuxAddress   -Role 'endpoint'
 
 Write-Host ''
-Write-Host 'Checking that it worked...'
-$check = & ssh.exe @sshCommon ("{0}@{1}" -f $User, $ManagerAddress) 'lab-dashboard-status' 2>&1
-if ($LASTEXITCODE -eq 0 -and $check -match '"services"') {
-    Write-Host '  The manager answered with service, agent and alert data.'
-} else {
-    Write-Warning '  The status command did not answer as expected. Group membership only takes effect on a new'
-    Write-Warning '  login, so if the alert list is empty, reboot the manager and try again.'
+Write-Host 'Checking what the manager will now answer...'
+$check = & ssh.exe @sshCommon ("{0}@{1}" -f $User, $ManagerAddress) 'sudo -n /var/ossec/bin/agent_control -l >/dev/null 2>&1 && echo agents_ok; sudo -n /usr/local/bin/lab-dashboard-indexer >/dev/null 2>&1 && echo indexer_ok; test -r /var/ossec/logs/alerts/alerts.json && echo alerts_ok' 2>&1
+foreach ($capability in @(
+    @{ Token = 'agents_ok';  Text = 'agent state' },
+    @{ Token = 'indexer_ok'; Text = 'indexer summary' },
+    @{ Token = 'alerts_ok';  Text = 'alert log' })) {
+    if ($check -match $capability.Token) { Write-Host ("  {0}: yes" -f $capability.Text) }
+    else { Write-Host ("  {0}: not yet" -f $capability.Text) }
 }
+
+Write-Host ''
+Write-Host 'Group membership only takes effect on a new login, so if the alert log still reads "not yet",'
+Write-Host 'restart the manager and check the dashboard again. Everything else applies immediately.'
 
 $plain = $null
 Write-Host ''
-Write-Host 'Done. Start the dashboard and the Lab health and Recent alerts panels will populate.'
+Write-Host 'Done.'

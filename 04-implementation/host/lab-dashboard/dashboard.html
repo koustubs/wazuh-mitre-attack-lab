@@ -85,6 +85,13 @@
   .lvl { font-weight: 600; }
   .lvl.hi { color: var(--danger); }
   .scroller { max-height: 440px; overflow-y: auto; }
+  /* Seed rules fire on every single failure and are not findings on their own, so they sit
+     back from the six detections the project is actually about. */
+  tr.seedrow td { color: var(--ink-soft); }
+  .tag { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-faint);
+         border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 4px; }
+  .logbox { margin: 0; font: 12px/1.55 ui-monospace, Consolas, monospace; white-space: pre-wrap;
+            word-break: break-word; color: var(--ink-soft); }
   .panelhead { display: flex; align-items: baseline; gap: 9px; }
   .panelhead h3 { margin-bottom: 10px; }
   select { font: inherit; font-size: 12px; padding: 3px 7px; border-radius: 6px;
@@ -101,6 +108,18 @@
   button.primary { border-color: var(--accent); color: var(--accent); }
   button.primary:hover:not(:disabled) { background: var(--accent-soft); }
   button.toggle[aria-pressed="true"] { border-color: var(--info); color: var(--info); }
+
+  .labbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .labbar .status { display: flex; flex-direction: column; gap: 2px; min-width: 240px; }
+  .labbar .headline { font-size: 14px; font-weight: 600; }
+  .labbar .detail { font-size: 12.5px; color: var(--ink-soft); }
+  .labbar .detail.bad { color: var(--danger); }
+  .bar { height: 4px; border-radius: 999px; background: var(--line); overflow: hidden; margin-top: 5px; width: 100%; }
+  .bar > i { display: block; height: 100%; background: var(--info); transition: width .4s ease; }
+  /* A sequence is a wait, not a freeze. The stripe says the page is still watching. */
+  .bar.live > i { background: repeating-linear-gradient(115deg, var(--info) 0 9px, transparent 9px 18px), var(--info);
+                  animation: creep 1s linear infinite; }
+  @keyframes creep { to { background-position: 18px 0, 0 0; } }
 
   .flag { font-size: 12px; background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn);
           border-radius: 7px; padding: 6px 10px; margin-bottom: 11px; }
@@ -126,11 +145,29 @@
 
 <div id="banner"></div>
 
+<div class="panel labbar" id="labbar"><span class="muted">Connecting...</span></div>
+
 <div class="panel hostbar" id="hostbar"><span class="muted">Connecting...</span></div>
 
 <div class="panel">
   <h3>Lab health</h3>
   <div id="health"><span class="faint">Waiting for the manager.</span></div>
+</div>
+
+<div class="panel">
+  <div class="panelhead">
+    <h3>Detection coverage</h3>
+    <span class="faint" id="covMeta"></span>
+  </div>
+  <div id="coverage"><span class="faint">Waiting for the manager.</span></div>
+</div>
+
+<div class="panel">
+  <div class="panelhead">
+    <h3>Pipeline</h3>
+    <span class="faint" id="pipeMeta"></span>
+  </div>
+  <div id="pipeline"><span class="faint">Waiting for the manager.</span></div>
 </div>
 
 <div class="panel">
@@ -150,8 +187,24 @@
   <div class="scroller" id="alerts"><span class="faint">Waiting for the manager.</span></div>
 </div>
 
+<div class="panel advonly">
+  <div class="panelhead">
+    <h3>Manager log</h3>
+    <span class="faint">ossec.log, newest first</span>
+  </div>
+  <div class="scroller" id="mlog"><span class="faint">Waiting for the manager.</span></div>
+</div>
+
 <h3>Virtual machines</h3>
 <div class="grid" id="grid"></div>
+
+<div class="panel advonly" style="margin-top:14px">
+  <div class="panelhead">
+    <h3>Run a scenario</h3>
+    <span class="faint">Generates the events the rules are written for, then cleans up after itself</span>
+  </div>
+  <div id="scenarios"></div>
+</div>
 
 <div class="panel advonly" style="margin-top:14px">
   <h3>Lab actions</h3>
@@ -181,7 +234,7 @@ const TOKEN = "__LAB_TOKEN__";
 const POLL_MS = 3000;
 const BUSY_STATES = ["Starting", "Stopping", "Saving", "Pausing", "Resuming", "Reset", "FastSaving"];
 
-let timer = null, paused = false;
+let timer = null, paused = false, seqRunning = false;
 const pending = {};
 
 function api(path, body) {
@@ -250,6 +303,135 @@ function renderHealth(health) {
   box.innerHTML = `<div class="svcgrid">${svc}${agents}</div>`;
 }
 
+// The manager reports what it could not read rather than returning nothing, so a panel can say
+// "this needs the one-time setup" instead of looking empty and healthy.
+function setupHint(health, what) {
+  if (!health || !health.reachable) return "Waiting for the manager.";
+  if ((health.missing || []).indexOf(what) >= 0) {
+    return "The manager cannot read this yet. Run Enable-LabDashboard.ps1 once to grant it.";
+  }
+  return null;
+}
+
+function renderCoverage(data) {
+  const box = document.getElementById("coverage");
+  const meta = document.getElementById("covMeta");
+  const rules = data.rules || [];
+  const health = data.health;
+  meta.textContent = "";
+
+  if (!rules.length) { box.innerHTML = `<span class="faint">The rule file could not be read from disk.</span>`; return; }
+
+  const hint = setupHint(health, "alerts");
+  const cov = (health && health.coverage) || {};
+  const w = health && health.window;
+  if (!hint && w) meta.textContent = "from " + w.from + " · " + w.count + " alerts read";
+  else if (hint) meta.textContent = "";
+
+  // Detections are the rules carrying an ATT&CK technique. The other two are the seed rules the
+  // frequency rules count, which fire constantly and are not findings in themselves.
+  const detections = rules.filter(r => r.technique);
+  const seen = detections.filter(r => cov[r.id]).length;
+  if (!hint) meta.textContent = seen + " of " + detections.length + " detections seen" + (w ? " since " + w.from : "");
+
+  box.innerHTML = `<table class="alerts">
+    <thead><tr><th>Rule</th><th>Level</th><th>ATT&amp;CK</th><th>Detects</th><th>Last seen</th><th>Count</th></tr></thead>
+    <tbody>${rules.map(r => {
+      const c = cov[r.id];
+      const isSeed = !r.technique;
+      const last = hint ? `<span class="faint">unknown</span>`
+        : c ? esc(c.last) : `<span class="faint">never</span>`;
+      return `<tr class="${isSeed ? "seedrow" : ""}">
+        <td class="n">${esc(r.id)}${isSeed ? ` <span class="tag">seed</span>` : ""}</td>
+        <td class="n"><span class="lvl ${r.level >= 10 ? "hi" : ""}">${r.level}</span></td>
+        <td class="n">${r.technique ? esc(r.technique) : `<span class="faint">&mdash;</span>`}</td>
+        <td>${esc(r.description)}</td>
+        <td class="t">${last}</td>
+        <td class="n">${hint ? "" : (c ? c.count : "0")}</td>
+      </tr>`;
+    }).join("")}</tbody></table>
+    ${hint ? `<div class="faint" style="margin-top:9px">${esc(hint)}</div>` : ""}`;
+}
+
+function renderPipeline(data) {
+  const box = document.getElementById("pipeline");
+  const meta = document.getElementById("pipeMeta");
+  const h = data.health;
+  meta.textContent = "";
+  if (!h || !h.reachable) { box.innerHTML = `<span class="faint">Waiting for the manager.</span>`; return; }
+
+  const bits = [];
+  if (h.disk) {
+    bits.push(["Manager disk", h.disk.freeGb + " / " + h.disk.totalGb + " GB free"]);
+    if (h.disk.logsMb != null) bits.push(["Wazuh logs", h.disk.logsMb + " MB"]);
+  }
+  // Only meaningful if the alert log was actually readable. A zero from an unread file is worse
+  // than no figure at all, because it looks like a working pipeline producing nothing.
+  const canReadAlerts = (h.missing || []).indexOf("alerts") < 0;
+  if (canReadAlerts && h.rate && h.rate.length) {
+    const total = h.rate.reduce((a, r) => a + r.count, 0);
+    const busiest = h.rate.reduce((a, r) => r.count > a.count ? r : a, h.rate[0]);
+    bits.push(["Alerts, last 12h", String(total)]);
+    if (total) bits.push(["Busiest hour", busiest.hour + ":00, " + busiest.count]);
+  }
+  if (h.indexer) {
+    bits.push(["Indexer", esc(h.indexer.status || "unknown")]);
+    if (h.indexer.docs != null) bits.push(["Alert documents", String(h.indexer.docs)]);
+    if (h.indexer.storeMb != null) bits.push(["Index size", h.indexer.storeMb + " MB"]);
+    if (h.indexer.retention) bits.push(["Retention", esc(h.indexer.retention)]);
+  }
+  const attack = (h.attack || []).slice(0, 4);
+
+  box.innerHTML =
+    `<div class="hostbar" style="padding:0">
+       ${bits.map(b => `<div class="metric"><span class="k">${esc(b[0])}</span><span class="v">${b[1]}</span></div>`).join("")}
+     </div>
+     ${attack.length ? `<div class="faint" style="margin-top:10px">Techniques seen: ${
+        attack.map(a => esc(a.tech) + " (" + a.count + ")").join(", ")}</div>` : ""}
+     ${(h.missing || []).length ? `<div class="faint" style="margin-top:8px">Not readable yet: ${
+        esc((h.missing || []).join(", "))}. Run Enable-LabDashboard.ps1 once to grant it.</div>` : ""}`;
+}
+
+function renderManagerLog(health) {
+  const box = document.getElementById("mlog");
+  const hint = setupHint(health, "log");
+  if (hint) { box.innerHTML = `<span class="faint">${esc(hint)}</span>`; return; }
+  const lines = (health.log || []);
+  if (!lines.length) { box.innerHTML = `<span class="faint">The log is empty.</span>`; return; }
+  box.innerHTML = `<pre class="logbox">${lines.map(esc).join("\n")}</pre>`;
+}
+
+const SCENARIOS = [
+  { id: "S1", what: "Repeated failed logons", attack: "T1110.001" },
+  { id: "S2", what: "Local account created",  attack: "T1136.001" },
+  { id: "S3", what: "Scheduled task or cron", attack: "T1053.005 / T1053.003" }
+];
+
+function renderScenarios(data) {
+  const box = document.getElementById("scenarios");
+  const state = {};
+  data.vms.forEach(v => state[v.name] = v.state);
+  const busy = !!(data.sequence && data.sequence.running);
+
+  box.innerHTML = SCENARIOS.map(s => {
+    const buttons = [["WAZUH-WIN", "Windows"], ["WAZUH-LINUX", "Linux"]].map(([vm, os]) => {
+      const off = state[vm] !== "Running" || busy;
+      return `<button type="button" class="mini" data-scen="${s.id}" data-vm="${vm}" data-mode="test" ${off ? "disabled" : ""}>${os}</button>
+              <button type="button" class="mini" data-scen="${s.id}" data-vm="${vm}" data-mode="comparison" ${off ? "disabled" : ""}>${os} benign</button>`;
+    }).join("");
+    return `<div class="svc">
+      <span class="unit">${s.id}</span>
+      <span class="state">${esc(s.what)}</span>
+      <span class="faint">${esc(s.attack)}</span>
+      <span class="grow"></span>
+      <span class="actions">${buttons}</span>
+    </div>`;
+  }).join("") +
+  `<div class="faint" style="margin-top:9px">The benign run is the comparison case: one failed logon instead of six, or
+   the same action recorded as approved. It should stay below the alert threshold, which is what makes the attack run mean
+   anything. Both need the one-time setup on Linux.</div>`;
+}
+
 function alertLimit() {
   const v = parseInt(document.getElementById("alertCount").value, 10);
   return isNaN(v) ? 50 : v;
@@ -258,7 +440,8 @@ function alertLimit() {
 function renderAlerts(health) {
   const box = document.getElementById("alerts");
   const meta = document.getElementById("alertMeta");
-  if (!health || !health.reachable) { meta.textContent = ""; box.innerHTML = `<span class="faint">Waiting for the manager.</span>`; return; }
+  const hint = setupHint(health, "alerts");
+  if (hint) { meta.textContent = ""; box.innerHTML = `<span class="faint">${esc(hint)}</span>`; return; }
   const all = health.alerts || [];
   if (!all.length) { meta.textContent = ""; box.innerHTML = `<span class="faint">No alerts recorded yet.</span>`; return; }
   // The manager always sends the newest 50, so narrowing this is a slice, not another round trip.
@@ -274,6 +457,73 @@ function renderAlerts(health) {
       <td>${esc(a.desc)}</td>
       <td>${esc(a.tech)}</td>
     </tr>`).join("")}</tbody></table>`;
+}
+
+function renderLab(data) {
+  const box = document.getElementById("labbar");
+  const vms = data.vms.filter(v => v.found);
+  const running = vms.filter(v => v.state === "Running").length;
+  const seq = data.sequence;
+  const busy = !!(seq && seq.running);
+  seqRunning = busy;
+
+  let headline, detail = "", detailClass = "", bar = "", buttons;
+
+  if (busy) {
+    headline = seq.kind === "up" ? "Bringing the lab up" : "Taking the lab down";
+    detail = seq.label + " · step " + seq.step + " of " + seq.total + " · " + seq.waited + "s";
+    bar = `<div class="bar live"><i style="width:${Math.round((seq.step - 1) / seq.total * 100) + 6}%"></i></div>`;
+    buttons = `<button type="button" data-lab="cancel">Cancel</button>`;
+  } else {
+    if (seq && seq.phase === "failed") {
+      headline = "That did not finish";
+      detail = seq.error;
+      detailClass = " bad";
+    } else if (!vms.length) {
+      headline = "No lab VMs found";
+      detail = "The names in this dashboard do not match anything on this host.";
+    } else if (running === 0) {
+      headline = "The lab is down";
+      detail = "All " + vms.length + " VMs are off and using no memory.";
+    } else if (running === vms.length) {
+      headline = "The lab is up";
+      const h = data.health;
+      if (seq && seq.phase === "done" && seq.kind === "up") {
+        detail = "Ready in " + seq.elapsed + " seconds.";
+      } else if (h && h.reachable) {
+        const down = (h.services || []).filter(s => s.state !== "active").length;
+        if (down) {
+          detail = down + " Wazuh service" + (down > 1 ? "s are" : " is") + " not active";
+          detailClass = " bad";
+        } else if ((h.missing || []).indexOf("agents") >= 0) {
+          // "0 of 0 agents" would read as both endpoints having dropped off, which is not what
+          // an unread value means.
+          detail = "All Wazuh services active. Agent state needs the one-time setup.";
+        } else {
+          const live = (h.agents || []).filter(a => /active/i.test(a.status || "")).length;
+          detail = live + " of " + (h.agents || []).length + " agents checking in";
+          if (live < (h.agents || []).length) detailClass = " bad";
+        }
+      } else {
+        detail = "All " + vms.length + " VMs running.";
+      }
+    } else {
+      headline = "The lab is partly up";
+      detail = running + " of " + vms.length + " VMs running.";
+    }
+    buttons =
+      `<button type="button" class="primary" data-lab="up" ${running === vms.length || !vms.length ? "disabled" : ""}>Bring the lab up</button>
+       <button type="button" data-lab="down" ${running === 0 ? "disabled" : ""}>Take the lab down</button>`;
+  }
+
+  box.innerHTML =
+    `<div class="status">
+       <span class="headline">${esc(headline)}</span>
+       <span class="detail${detailClass}">${esc(detail)}</span>
+       ${bar}
+     </div>
+     <span class="spacer"></span>
+     <div class="actions">${buttons}</div>`;
 }
 
 function render(data) {
@@ -293,8 +543,17 @@ function render(data) {
      <div class="metric"><span class="k">Lab is using</span><span class="v">${data.labMemoryGb} GB</span></div>
      ${h.disks.map(d => `<div class="metric"><span class="k">${d.name} free</span><span class="v">${d.freeGb} GB</span></div>`).join("")}`;
 
+  renderLab(data);
   renderHealth(data.health);
+  renderCoverage(data);
+  renderPipeline(data);
   renderAlerts(data.health);
+  renderManagerLog(data.health);
+  renderScenarios(data);
+
+  // A sequence owns the VMs while it runs. Leaving the per-VM buttons live would let a click
+  // fight the thing that was asked to run.
+  const seqBusy = !!(data.sequence && data.sequence.running);
 
   document.getElementById("grid").innerHTML = data.vms.map(vm => {
     if (!vm.found) {
@@ -309,7 +568,7 @@ function render(data) {
     const busy = BUSY_STATES.indexOf(vm.state) >= 0;
     const running = vm.state === "Running";
     const isPending = pending[vm.name] && (Date.now() - pending[vm.name].at < 45000) && pending[vm.name].from === vm.state;
-    const lock = busy || isPending;
+    const lock = busy || isPending || seqBusy;
 
     const probes = vm.probes && vm.probes.length
       ? vm.probes.map(p => `<span><span class="dot ${p.open ? "up" : "down"}"></span>${esc(p.label)} ${p.open ? "ok" : "no answer"}</span>`).join("")
@@ -356,6 +615,33 @@ function refresh() {
 }
 
 document.addEventListener("click", ev => {
+  const labBtn = ev.target.closest("button[data-lab]");
+  if (labBtn) {
+    const act = labBtn.dataset.lab;
+    if (act === "down" && !confirm(
+        "Take the lab down?\n\nBoth endpoints are asked to shut down first, then the manager last, " +
+        "so the indexer is the final thing to close. Nothing is forced.")) return;
+    labBtn.disabled = true;
+    api("/api/lab", { action: act })
+      .then(r => { note(r.ok ? r.message : r.error, r.ok ? "" : "error"); refresh(); })
+      .catch(() => note("Could not reach the dashboard server.", "error"));
+    return;
+  }
+  // Checked before data-vm, because a scenario button carries both.
+  const scenBtn = ev.target.closest("button[data-scen]");
+  if (scenBtn) {
+    const { scen, vm, mode } = scenBtn.dataset;
+    const benign = mode === "comparison";
+    if (!confirm(
+        `Run ${scen}${benign ? " (benign comparison)" : ""} on ${vm}?\n\n` +
+        `This creates a temporary local account, and for S3 a scheduled task or cron entry, in order to ` +
+        `generate the events the rules detect. The script removes everything it created when it finishes.`)) return;
+    scenBtn.disabled = true;
+    api("/api/scenario", { vm: vm, scenario: scen, mode: mode })
+      .then(r => { note(r.ok ? r.message : r.error, r.ok ? "" : "error"); refresh(); })
+      .catch(() => note("Could not reach the dashboard server.", "error"));
+    return;
+  }
   const vmBtn = ev.target.closest("button[data-vm]");
   if (vmBtn) {
     const vm = vmBtn.dataset.vm, act = vmBtn.dataset.act;
@@ -431,13 +717,18 @@ document.getElementById("quit").addEventListener("click", () => {
 
 // Polling stops entirely while the tab is hidden, so leaving this open in a background tab costs
 // nothing at all. It picks up again the moment you look at it.
+//
+// The exception is a sequence in progress. The server advances it one step per request, so it
+// only moves while this page is asking: going quiet part way through a bring-up would leave it
+// stalled mid boot. A few minutes of polling during a sequence is worth that.
 function schedule() {
   clearTimeout(timer);
-  if (paused || document.hidden) return;
+  if (paused || (document.hidden && !seqRunning)) return;
   timer = setTimeout(() => refresh().then(schedule), POLL_MS);
 }
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && !paused) { refresh().then(schedule); } else { clearTimeout(timer); }
+  if (!document.hidden && !paused) { refresh().then(schedule); }
+  else if (!seqRunning) { clearTimeout(timer); }
 });
 
 refresh().then(schedule);
