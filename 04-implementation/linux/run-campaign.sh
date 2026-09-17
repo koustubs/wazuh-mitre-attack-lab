@@ -373,7 +373,13 @@ cmd_start() {
     # existing labadmin key instead of needing a sudo grant of its own. The evidence directories
     # under /var/log/wazuh-lab/evidence keep the script's umask, because an S1 run leaves a
     # throwaway sshd host key in there.
-    chmod 0755 "$CAMPAIGN_ROOT" "$dir"
+    #
+    # The grandparent matters as much as the files. invoke-scenario.sh creates
+    # /var/log/wazuh-lab with mkdir -p under umask 077, so it is 0700 and without traverse on it
+    # nothing underneath is reachable however the files themselves are set. Missing this made
+    # the first real campaign unreadable from the host while the campaign itself ran fine, which
+    # is the worst shape for a fault: silent, and only visible in the morning.
+    chmod 0755 "$(dirname -- "$CAMPAIGN_ROOT")" "$CAMPAIGN_ROOT" "$dir"
     chmod 0644 "$dir/campaign.jsonl" "$dir/activity.jsonl" "$dir/campaign.log"
     python3 - "$dir/campaign.state" "$campaign" "$(iso)" "$hours" "$(hostname -s)" <<'PY'
 import json, pathlib, sys
@@ -383,6 +389,16 @@ pathlib.Path(p).write_text(json.dumps(dict(
     minS1GapSeconds=150, running=False), indent=2) + '\n')
 PY
     chmod 0644 "$dir/campaign.state"
+
+    # Prove it rather than assume it. The point of the modes above is that the host can copy
+    # these back as the night goes, and a campaign whose records cannot be reached is a campaign
+    # whose records are lost if the VM is. Checked as the invoking user, loudly, at start.
+    local reader=${SUDO_USER:-labadmin}
+    if id -u "$reader" >/dev/null 2>&1 \
+       && ! su -s /bin/sh -c "test -r '$dir/campaign.jsonl'" "$reader" 2>/dev/null; then
+        echo "WARNING: $reader cannot read $dir/campaign.jsonl, so Sync-LabCampaign.ps1 will" >&2
+        echo "         collect nothing. Check the mode of every directory on that path." >&2
+    fi
 
     setsid nohup bash "${BASH_SOURCE[0]}" __run "$dir" "$hours" \
         >> "$dir/campaign.log" 2>&1 < /dev/null &
