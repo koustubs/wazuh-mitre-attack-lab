@@ -41,7 +41,9 @@
   h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.02em; }
   h3 { font-size: 11px; font-weight: 650; margin: 0 0 12px; text-transform: uppercase;
        letter-spacing: .07em; color: var(--ink-faint); }
-  .topbar { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+  .topbar { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+             position: sticky; top: 0; z-index: 20; background: var(--bg);
+             margin: 0 -26px 16px; padding: 4px 26px 12px; border-bottom: 1px solid var(--line); }
   .spacer { flex: 1; }
   .muted { color: var(--ink-soft); }
   .faint { color: var(--ink-faint); font-size: 12px; }
@@ -61,9 +63,33 @@
 
   /* Lab health and Pipeline are both short. Full width each, they stretched the page for no
      reason; side by side they fit the space and the stack gets shorter. */
-  .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
-  .duo > .panel { margin-bottom: 14px; }
-  @media (max-width: 820px) { .duo { grid-template-columns: 1fr; gap: 0; } }
+  /* A wide screen should show more at once rather than the same column stretched wider. The
+     three things read at a glance keep the full width across the top; under them the page
+     splits, with the tall tables and the VM cards on the left and the short readouts beside
+     them instead of below. Under 1080px there is not enough room for two, so it stacks. */
+  .layout { display: grid; grid-template-columns: minmax(0, 1.62fr) minmax(0, 1fr);
+            gap: 14px; align-items: start; }
+  .col { min-width: 0; }
+  @media (max-width: 1080px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+  /* The panel the project exists to produce, so it gets the width and a firmer edge than the
+     panels reporting on the machinery underneath it. */
+  .hero { border-color: var(--line-strong); }
+
+  /* Top strip: evenly spread readouts, divided rather than floating. */
+  #hostbar { padding: 14px 18px; }
+  #hostbar .metric { padding-left: 18px; border-left: 1px solid var(--line); }
+  #hostbar .metric:first-child { padding-left: 0; border-left: 0; }
+
+  /* The same .hostbar markup appears in the rail, where a row of tiles makes no sense in
+     380px. There it becomes a label-left, value-right list. renderPipeline emits this class
+     too, so Pipeline picks up the same treatment without knowing about it. */
+  .col-rail .hostbar { display: flex; flex-direction: column; gap: 0; padding: 0; }
+  .col-rail .metric { flex-direction: row; align-items: baseline; justify-content: space-between;
+                      gap: 14px; padding: 7px 0; border-top: 1px solid var(--line); }
+  .col-rail .metric:first-child { border-top: 0; padding-top: 0; }
+  .col-rail .metric .k { flex: none; }
+  .col-rail .metric .v { font-size: 14px; }
 
   .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
@@ -206,9 +232,7 @@
   button.linkish:hover:not(:disabled) { color: var(--ink); border-color: transparent; text-decoration: underline; }
 
   /* ---- Lab access -------------------------------------------------------------------- */
-  #creds { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-  @media (min-width: 1480px) { #creds { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-  @media (max-width: 880px)  { #creds { grid-template-columns: minmax(0, 1fr); } }
+  #creds { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 10px; }
   .cred { display: grid; grid-template-columns: 1fr; gap: 8px; padding: 13px 15px;
           border: 1px solid var(--line); border-radius: 9px; background: var(--sunken);
           align-items: start; min-width: 0; }
@@ -262,32 +286,7 @@
 
 <div class="panel hostbar" id="hostbar"><span class="muted">Connecting...</span></div>
 
-<div class="panel">
-  <div class="panelhead">
-    <h3>Lab access</h3>
-    <span class="faint" id="accessMeta"></span>
-    <span class="spacer"></span>
-    <button type="button" class="mini" id="credsReveal">Show passwords</button>
-  </div>
-  <div id="creds"><span class="faint">Reading...</span></div>
-</div>
-
-<div class="duo">
-  <div class="panel">
-    <h3>Lab health</h3>
-    <div id="health"><span class="faint">Waiting for the manager.</span></div>
-  </div>
-
-  <div class="panel">
-    <div class="panelhead">
-      <h3>Pipeline</h3>
-      <span class="faint" id="pipeMeta"></span>
-    </div>
-    <div id="pipeline"><span class="faint">Waiting for the manager.</span></div>
-  </div>
-</div>
-
-<div class="panel">
+<div class="panel hero">
   <div class="panelhead">
     <h3>Detection coverage</h3>
     <span class="faint" id="covMeta"></span>
@@ -295,7 +294,13 @@
   <div id="coverage"><span class="faint">Waiting for the manager.</span></div>
 </div>
 
-<div class="panel">
+<div class="layout">
+<div class="col col-main">
+
+<h3>Virtual machines</h3>
+<div class="grid" id="grid"></div>
+
+<div class="panel" style="margin-top:14px">
   <div class="panelhead">
     <h3>Recent alerts</h3>
     <span class="faint" id="alertMeta"></span>
@@ -320,10 +325,7 @@
   <div class="scroller" id="mlog"><span class="faint">Waiting for the manager.</span></div>
 </div>
 
-<h3>Virtual machines</h3>
-<div class="grid" id="grid"></div>
-
-<div class="panel advonly" style="margin-top:14px">
+<div class="panel advonly">
   <div class="panelhead">
     <h3>Run a scenario</h3>
     <span class="faint">Generates the events the rules are written for, then cleans up after itself</span>
@@ -331,7 +333,33 @@
   <div id="scenarios"></div>
 </div>
 
-<div class="panel advonly" style="margin-top:14px">
+</div><!-- /.col-main -->
+<div class="col col-rail">
+
+<div class="panel">
+  <h3>Lab health</h3>
+  <div id="health"><span class="faint">Waiting for the manager.</span></div>
+</div>
+
+<div class="panel">
+  <div class="panelhead">
+    <h3>Lab access</h3>
+    <span class="faint" id="accessMeta"></span>
+    <span class="spacer"></span>
+    <button type="button" class="mini" id="credsReveal">Show passwords</button>
+  </div>
+  <div id="creds"><span class="faint">Reading...</span></div>
+</div>
+
+<div class="panel">
+  <div class="panelhead">
+    <h3>Pipeline</h3>
+    <span class="faint" id="pipeMeta"></span>
+  </div>
+  <div id="pipeline"><span class="faint">Waiting for the manager.</span></div>
+</div>
+
+<div class="panel advonly">
   <h3>Lab actions</h3>
   <div class="advrow">
     <button type="button" id="lockAutostart">Lock: never autostart</button>
@@ -346,6 +374,9 @@
     <span class="faint">Closes the server. The VMs are left exactly as they are.</span>
   </div>
 </div>
+
+</div><!-- /.col-rail -->
+</div><!-- /.layout -->
 
 <div id="notices"></div>
 
