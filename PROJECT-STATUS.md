@@ -79,7 +79,8 @@ SSH keypair, a random 20 character console password, and the three unattended in
 The Wazuh dashboard admin password is not stored there; it is in
 `/root/wazuh-lab-install/install.log` on the manager.
 
-**Firewall.** `configure-manager.sh` restricts the manager with ufw: SSH and 443 only from the
+**Firewall.** `install-manager.sh` restricts the manager with ufw, before the platform is
+started: SSH and 443 only from the
 host, and 1514 only from the two endpoint addresses. The dashboard is deliberately not reachable
 from anywhere except the host.
 
@@ -200,8 +201,12 @@ transfers with a checksum.
 
 ```
 wazuh-threat-detection/
+  Lab.cmd                       front door: opens the dashboard
   README.md                     project overview
   PROJECT-STATUS.md             this file
+  SECURITY.md                   what is excluded, and the pre-publication checklist
+  docs/
+    fresh-clone.md              what a clone does not contain, and how to rebuild it
   01-context-analysis/          step 1, with system context diagram
   02-scope-and-problem/         step 2, scenarios and acceptance criteria
   03-technical-design/          step 3, stack and approach
@@ -209,20 +214,26 @@ wazuh-threat-detection/
     README.md                   step 4 results, the main technical record
     deployment-guide.md         build order, hostnames, addresses
     host/
+      New-LabSecrets.ps1        creates the SSH keypair and console password
       New-Lab.ps1               creates switch, NAT and three VMs
       New-LabSeeds.ps1          cloud-init seed ISOs for the Ubuntu machines
       New-WindowsSeed.ps1       autounattend ISO for Windows
       LabConsole.ps1            headless VM console over WMI
       Get-LabHost.ps1           host capacity preflight
       .lab-secrets/             gitignored: keys, password, seed images
+      lab-dashboard/
+        Start-LabDashboard.ps1  the dashboard server, and the lab up and down sequences
+        dashboard.html          the page
+        Enable-LabDashboard.ps1 one-time grant so it can read alerts, agents and the indexer
     manager/
-      install-manager.sh        manager, indexer and dashboard, pinned to 4.14.7
-      configure-manager.sh      lab rules, firewall, agent identities
+      install-manager.sh        manager, indexer and dashboard pinned to 4.14.7, and the firewall
+      configure-manager.sh      lab rules and agent identities
       configure-dashboard.sh    index pattern the UI needs in order to render anything
       lab_rules.xml             the six detection rules
     linux/                      agent install and scenario driver
     windows/                    agent install and scenario driver
     tests/
+      fetch-engine-package.sh   re-fetches the pinned manager package a clone does not have
       test_rules.py             offline rule checks against a real engine
       s1-burst.sh               controlled failure bursts for frequency edge cases
       query-frequency.sh        reads back which rule fired, on which agent
@@ -236,21 +247,22 @@ wazuh-threat-detection/
 
 ## 8. Rebuilding from scratch
 
-1. Run `host/New-Lab.ps1` from an elevated PowerShell with both installation ISOs.
-2. Run `host/New-LabSeeds.ps1` and `host/New-WindowsSeed.ps1` to build the unattended images.
-3. Attach the seeds as second DVD drives, then boot each machine.
-4. For the two Ubuntu machines only, add `autoinstall` to the GRUB kernel line. `LabConsole.ps1`
+1. Run `host/New-LabSecrets.ps1` to create the SSH keypair and console password. A clone has
+   none, and every step below depends on them.
+2. Run `host/New-Lab.ps1` from an elevated PowerShell with both installation ISOs.
+3. Run `host/New-LabSeeds.ps1` and `host/New-WindowsSeed.ps1` to build the unattended images.
+4. Attach the seeds as second DVD drives, then boot each machine.
+5. For the two Ubuntu machines only, add `autoinstall` to the GRUB kernel line. `LabConsole.ps1`
    can do this without opening a console window. Everything after that is unattended.
-5. Once the Ubuntu machines power themselves off, eject the media, set the boot order to disk,
+6. Once the Ubuntu machines power themselves off, eject the media, set the boot order to disk,
    and start them.
-6. On the manager, run `manager/install-manager.sh`, then `manager/configure-manager.sh`, then
+7. On the manager, run `manager/install-manager.sh`, then `manager/configure-manager.sh`, then
    `manager/configure-dashboard.sh`. Do not skip the third: without it the dashboard renders
    nothing, however well detection is working.
-7. Transfer each agent key and run the matching agent installer on each endpoint.
-8. Run the scenarios.
+8. Transfer each agent key and run the matching agent installer on each endpoint.
+9. Run the scenarios.
 
-`deployment-guide.md` has the detail. The full sequence is not yet a single command, which is the
-main thing the next phase should address.
+`deployment-guide.md` has the detail. The full sequence is still not a single command.
 
 ---
 
@@ -266,21 +278,31 @@ main thing the next phase should address.
 - The rule set covers three behaviours by design. Coverage claims should stay limited to the six
   cases in the results table.
 
-**Next phase, as discussed:**
+**Done since, in the packaging phase:**
 
-- Optimisation.
-- Packaging so the repository can be cloned and deployed in one step. The pieces exist as
-  separate scripts with a documented order; they are not yet a single entry point. The main gaps
-  are the manual GRUB edit for Ubuntu autoinstall, the manual key transfer between manager and
-  endpoints, and the absence of an orchestrator that runs the whole sequence and checks each
-  stage before moving on.
+- The project is a Git repository, built to the standard a public one needs from the first
+  commit. No credential has ever been committed. `SECURITY.md` carries the checklist to run
+  before making it public, including reading the mentor PDF, whose text cannot be scanned
+  automatically.
+- `host/New-LabSecrets.ps1` creates the credentials. Nothing in the repository did, which meant a
+  clone stopped at step 2 with a confusing error, and the gap was invisible on the machine where
+  the files already existed.
+- `Lab.cmd` opens the dashboard, which is now the front door: one button brings the lab up in the
+  right order and another takes it down in the reverse order.
+- The dashboard reads detection coverage, the alert pipeline and the manager log, and can trigger
+  any of the three scenarios on either endpoint.
+
+**Still open:**
+
+- A single command from bare ISOs. The remaining manual steps are the GRUB edit for Ubuntu
+  autoinstall and the key transfer between manager and endpoints.
 
 **Housekeeping:**
 
 - The PDF for the mentor covers steps 1 to 3 and predates the build. If he wants the results, it
   needs regenerating to include step 4.
-- Staged sudo passwords were shredded from both Ubuntu VMs after use. If you resume automation
-  you will need to stage them again, or configure passwordless sudo for the lab accounts.
+- `lab-dashboard/Enable-LabDashboard.ps1` replaces the staged sudo password chore. It grants a
+  narrow, visudo-checked rule once and stores nothing.
 - `sshpass` was installed on the manager so it could act as a second endpoint for the cross-agent
   test. `tests/s1-burst.sh` needs it on whichever machine runs a burst.
 - The two Ubuntu VMs still have an unmerged differencing disk from the automatic checkpoint that
