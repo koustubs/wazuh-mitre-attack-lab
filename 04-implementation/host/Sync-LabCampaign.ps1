@@ -53,13 +53,40 @@ $SshCommon = @(
     '-o', 'StrictHostKeyChecking=no'
     '-o', 'UserKnownHostsFile=NUL'
     '-o', 'ConnectTimeout=8'
+    # Without this, every single call prints "Permanently added ... to the list of known hosts"
+    # on stderr, because the known hosts file is the null device and nothing is ever remembered.
+    '-o', 'LogLevel=ERROR'
 )
+
+function Invoke-Native {
+    <#
+    Runs a native executable and returns its output, without letting stderr masquerade as a
+    failure.
+
+    Windows PowerShell 5.1 wraps each stderr line from a native command in an ErrorRecord when
+    the stream is redirected, and $ErrorActionPreference = 'Stop' then promotes that to a
+    terminating error even when the process exited 0. ssh's host key notice alone was enough to
+    fail every sync, with the warning text reported as though it were the error. Only the exit
+    code decides here.
+    #>
+    param([Parameter(Mandatory)][string]$Exe, [Parameter(Mandatory)][string[]]$Arguments)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & $Exe @Arguments 2>&1
+        return [pscustomobject]@{ Code = $LASTEXITCODE; Output = $out }
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
 
 function Invoke-Remote {
     param([Parameter(Mandatory)][string]$Command)
-    $out = & ssh.exe @SshCommon ('{0}@{1}' -f $User, $Address) $Command 2>&1
-    if ($LASTEXITCODE -ne 0) { throw ("ssh failed ({0}): {1}" -f $LASTEXITCODE, ($out -join ' ')) }
-    return $out
+    $r = Invoke-Native -Exe 'ssh.exe' -Arguments ($SshCommon + @(('{0}@{1}' -f $User, $Address), $Command))
+    if ($r.Code -ne 0) {
+        throw ("ssh exited {0}: {1}" -f $r.Code, (($r.Output | Out-String) -replace '\s+', ' ').Trim())
+    }
+    return $r.Output
 }
 
 function Sync-Once {
@@ -77,9 +104,11 @@ function Sync-Once {
         if (-not (Test-Path -LiteralPath $local)) { New-Item -ItemType Directory -Path $local -Force | Out-Null }
         foreach ($f in 'campaign.jsonl', 'activity.jsonl', 'campaign.state', 'campaign.log') {
             # A campaign that is still starting up has not written every file yet, so a missing
-            # one is normal and must not stop the sync of the others.
-            & scp.exe @SshCommon -q ('{0}@{1}:{2}/{3}/{4}' -f $User, $Address, $RemoteRoot, $c, $f) `
-                (Join-Path $local $f) 2>&1 | Out-Null
+            # one is normal and must not stop the sync of the others. Same stderr rule as above:
+            # only the exit code is consulted.
+            $null = Invoke-Native -Exe 'scp.exe' -Arguments ($SshCommon + @(
+                '-q', ('{0}@{1}:{2}/{3}/{4}' -f $User, $Address, $RemoteRoot, $c, $f),
+                (Join-Path $local $f)))
         }
         $copied += $c
     }
@@ -146,7 +175,9 @@ if ($Watch) {
     Write-Host ("Syncing every {0}s. Ctrl+C to stop; the campaign on the VM keeps running." -f $IntervalSeconds)
     while ($true) {
         try {
-            $c = Sync-Once
+            # @() because a single returned campaign unrolls to a bare string on the way out of
+            # the function, and Set-StrictMode makes .Count on one an error.
+            $c = @(Sync-Once)
             Write-Host ('{0}  synced {1} campaign(s)' -f (Get-Date -Format 'HH:mm:ss'), $c.Count)
         } catch {
             # The endpoint being briefly unreachable is not a reason to abandon the night.
@@ -159,7 +190,7 @@ if ($Watch) {
     # the host's own copy, so it is worth printing whether or not this sync got through.
     $reached = $true
     try {
-        $c = Sync-Once
+        $c = @(Sync-Once)
         Write-Host ('Synced {0} campaign(s).' -f $c.Count)
     } catch {
         $reached = $false
