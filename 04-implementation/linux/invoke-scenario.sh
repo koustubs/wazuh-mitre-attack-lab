@@ -5,9 +5,25 @@ umask 077
 [[ $(hostname -s) == wazuh-linux ]] || { echo 'Run this on the wazuh-linux lab VM.' >&2; exit 1; }
 scenario=${1:-}
 mode=${2:-test}
+# Optional third argument: how many failed logons S1 should make. Left off, this script behaves
+# exactly as it always has, 6 for test and 1 for comparison, so the recorded evidence and the
+# lab-scenario wrapper are unaffected. run-campaign.sh sets it, because a dataset made of only
+# two fixed shapes teaches a model the two shapes rather than the behaviour.
+#
+# The caller owns the pairing of mode to count. Rule 100111 is frequency 6, so comparison must
+# stay at or below 5 and test must be 6 or more, or the label stops describing the alert.
+logons=${3:-}
 [[ $scenario =~ ^S[123]$ && $mode =~ ^(test|comparison)$ ]] || {
-    echo 'Usage: sudo bash invoke-scenario.sh S1|S2|S3 [test|comparison]' >&2; exit 1;
+    echo 'Usage: sudo bash invoke-scenario.sh S1|S2|S3 [test|comparison] [failed-logons]' >&2; exit 1;
 }
+[[ -z $logons || $logons =~ ^([1-9]|1[0-9]|20)$ ]] || {
+    echo 'Failed logons must be a whole number from 1 to 20.' >&2; exit 1;
+}
+if [[ -n $logons ]]; then
+    { [[ $mode == comparison && $logons -le 5 ]] || [[ $mode == test && $logons -ge 6 ]]; } || {
+        echo 'comparison takes 1 to 5 failed logons, test takes 6 or more.' >&2; exit 1;
+    }
+fi
 systemctl is-active --quiet wazuh-agent || { echo 'Start the Wazuh agent first.' >&2; exit 1; }
 run_id=$(python3 -c 'import secrets; print(secrets.token_hex(5))')
 name=wz$run_id
@@ -74,6 +90,7 @@ EOF
     printf '%s\n' 'DeliberatelyWrong!7' > "$run_dir/wrong-password"
     attempts=6
     [[ $mode == comparison ]] && attempts=1
+    [[ -n $logons ]] && attempts=$logons
     for ((i=0; i<attempts; i++)); do
         set +e
         sshpass -f "$run_dir/wrong-password" ssh -p "$port" -o StrictHostKeyChecking=yes \
