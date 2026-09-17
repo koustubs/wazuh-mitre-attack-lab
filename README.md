@@ -17,7 +17,21 @@ detection cases are proven on live endpoints, and alerts are searchable in the i
 
 For the full picture including what was hit along the way and what comes next, read
 [PROJECT-STATUS.md](PROJECT-STATUS.md). To rebuild the lab, start with the
-[deployment guide](04-implementation/deployment-guide.md).
+[deployment guide](04-implementation/deployment-guide.md). Cloning this rather than reading it,
+start with [what a fresh clone does not contain](docs/fresh-clone.md).
+
+## Running it
+
+`Lab.cmd` is the front door. It opens a local dashboard that starts and stops the lab, shows what
+each VM is costing, and answers the question the project exists to answer: are all six detections
+alive, and when did each one last fire.
+
+One button brings the lab up in the right order, manager first so the agents have something to
+connect to, and takes it down in the reverse order so the indexer closes cleanly. Nothing starts
+by itself: every VM is created with `AutomaticStartAction Nothing`, and the dashboard has no code
+path that can change that to anything else.
+
+See [the dashboard notes](04-implementation/host/lab-dashboard/README.md).
 
 ## What was built
 

@@ -25,12 +25,23 @@ Getting these wrong is the most likely reason a script refuses to run.
 | Linux endpoint | WAZUH-LINUX | `wazuh-linux` | 172.29.70.30 |
 
 Gateway 172.29.70.1, prefix /24. The endpoint addresses are fixed by the firewall rules in
-`configure-manager.sh`, which only opens port 1514 to .20 and .30.
+`install-manager.sh`, which only opens port 1514 to .20 and .30.
 
 The guest host name is set during operating system installation and is not the same as the
 Hyper-V VM name. Setting only the VM name is the easy mistake here.
 
 ## Steps
+
+**0. Create the lab credentials.** Nothing else works without them, and a fresh clone has none.
+
+```
+.\host\New-LabSecrets.ps1
+```
+
+This writes the SSH keypair, the console password and its SHA-512 crypt hash into
+`host\.lab-secrets\`, which is gitignored. Both seed builders in the next step read those files
+and fail immediately if they are missing. It refuses to overwrite an existing set without
+`-Force`, because replacing the key locks you out of any VM already built with it.
 
 **1. Create the VMs.** From an elevated prompt:
 
@@ -120,12 +131,20 @@ detection on its own.
 
 ## Running the lab day to day
 
-`host/lab-dashboard/Lab dashboard.cmd` opens a small control panel in your browser showing live
-state and resource usage for all three VMs, with start, shut down, restart and force off. It asks
-for elevation once at launch, because Hyper-V will not report VM state otherwise.
+`Lab.cmd`, at the root of the repository, is the front door. It opens the dashboard in your
+browser, and that is where the lab is started, watched and stopped from. It asks for elevation
+once at launch, because Hyper-V will not report VM state otherwise.
+
+"Bring the lab up" starts the manager, waits for it to boot and for the four Wazuh services to
+come up, then starts both endpoints and waits for the agents to check in. "Take the lab down"
+reverses it, endpoints first and the manager last, so the indexer is the final thing to close.
 
 It will not start anything by itself. Opening it is read-only, and the only autostart value it can
-write is `Nothing`. See `host/lab-dashboard/README.md`.
+write is `Nothing`.
+
+Run `host/lab-dashboard/Enable-LabDashboard.ps1` once, after the lab is built, so the dashboard
+can also read alerts, agent state and the indexer. Without it the dashboard still works and says
+which of those it cannot read. See `host/lab-dashboard/README.md`.
 
 ## Worth knowing
 
