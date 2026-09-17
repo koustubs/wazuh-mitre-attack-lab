@@ -1,0 +1,37 @@
+@startuml
+title Wazuh Threat Detection\nSystem context - Windows and Linux lab
+left to right direction
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 14
+skinparam ArrowColor #475569
+skinparam rectangleBorderColor #475569
+skinparam noteBackgroundColor #F8FAFC
+skinparam noteBorderColor #94A3B8
+
+rectangle "Windows endpoint\nSecurity events\nWazuh agent" as windows #F1F5F9
+rectangle "Linux endpoint\nAuthentication, audit and file events\nWazuh agent" as linux #F1F5F9
+
+rectangle "Central Wazuh deployment" as system #DBEAFE {
+  rectangle "Collect endpoint evidence\nEvaluate detection rules\nStore and present mapped alerts" as detection #FFFFFF
+}
+
+rectangle "MITRE ATT&CK\nBehaviour definitions\nand technique IDs" as mitre #F1F5F9
+actor "Administrator / analyst" as analyst
+
+windows --> detection : endpoint events
+linux --> detection : endpoint events
+mitre ..> detection : informs rules and mappings
+detection --> analyst : alerts and supporting evidence\nthrough existing dashboard
+
+note bottom of system
+  Prototype stack: see step 3.
+  Deployment details pending review.
+end note
+
+legend bottom
+  Solid arrows: information flow
+  Dotted arrow: design reference, no per-event external lookup
+endlegend
+@enduml

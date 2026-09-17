@@ -1,0 +1,30 @@
+# Credentials. Nothing under here has ever been committed and nothing should be.
+04-implementation/host/.lab-secrets/
+*.key
+*.pem
+client.keys
+authd.pass
+
+# Raw evidence carries account names, source addresses, task contents and install detail. The
+# two exceptions are the sanitised summaries written specifically to be committed.
+04-implementation/evidence/*
+!04-implementation/evidence/README.md
+!04-implementation/evidence/validation-status.md
+host-preflight.json
+
+# Large artefacts that are fetched or built rather than stored. The manager package is half a
+# gigabyte; tests/fetch-engine-package.sh retrieves it and checks it against a pinned hash.
+.cache/
+*.part
+wazuh-install-files.tar
+*.msi
+*.deb
+*.iso
+*.vhd*
+
+# Working files
+**/__pycache__/
+*.bak
+*.log
+Thumbs.db
+desktop.ini
