@@ -348,7 +348,13 @@ cmd_start() {
     [[ $EUID == 0 ]] || die 'Run with sudo.'
     [[ $(hostname -s) == wazuh-linux ]] || die 'Run this on the wazuh-linux lab VM.'
     systemctl is-active --quiet wazuh-agent || die 'Start the Wazuh agent first.'
-    find_generator >/dev/null || die 'invoke-scenario.sh is not installed and is not beside this script.'
+    local gen
+    gen=$(find_generator) || die 'invoke-scenario.sh is not installed and is not beside this script.'
+    # find_generator prefers the installed copy. One from before the logon count was added
+    # rejects the third argument, so every varied S1 run would fail and the night would collect
+    # nothing but errors. Far cheaper to notice now than at 3am.
+    grep -q 'failed-logons' "$gen" || die \
+        "$gen predates the logon count and would reject every varied S1 run. Install the current invoke-scenario.sh over it."
     command -v sshpass >/dev/null || die 'sshpass is missing; S1 cannot run without it.'
 
     local live
