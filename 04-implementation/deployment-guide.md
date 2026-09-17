@@ -135,6 +135,11 @@ detection on its own.
 browser, and that is where the lab is started, watched and stopped from. It asks for elevation
 once at launch, because Hyper-V will not report VM state otherwise.
 
+The page checks the machine before it opens: virtualization enabled in firmware, the Hyper-V
+platform live, the switch and NAT, all three VMs, `.lab-secrets`, and an SSH client. Anything
+blocking is named along with the command that fixes it. It also shows the logins for the Wazuh
+web interface and all three guests, with the passwords masked until asked for.
+
 "Bring the lab up" starts the manager, waits for it to boot and for the four Wazuh services to
 come up, then starts both endpoints and waits for the agents to check in. "Take the lab down"
 reverses it, endpoints first and the manager last, so the indexer is the final thing to close.

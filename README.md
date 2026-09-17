@@ -26,6 +26,11 @@ start with [what a fresh clone does not contain](docs/fresh-clone.md).
 each VM is costing, and answers the question the project exists to answer: are all six detections
 alive, and when did each one last fire.
 
+It checks the machine before it opens, so a host that cannot run the lab says why rather than
+failing later: virtualization in firmware, the Hyper-V platform, the switch and NAT, the VMs,
+and the credentials a fresh clone does not have. It also carries the logins for the Wazuh web
+interface and all three guests.
+
 One button brings the lab up in the right order, manager first so the agents have something to
 connect to, and takes it down in the reverse order so the indexer closes cleanly. Nothing starts
 by itself: every VM is created with `AutomaticStartAction Nothing`, and the dashboard has no code

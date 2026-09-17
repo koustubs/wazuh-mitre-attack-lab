@@ -14,7 +14,13 @@ What this adds is everything that needs root on the far side:
       units, agent_control -l, and the indexer summary below. Nothing else.
     - /usr/local/bin/lab-dashboard-indexer, which reports cluster health, alert document count
       and retention policy state. It authenticates to the indexer with the admin certificate,
-      so no password is read, stored or transmitted anywhere.
+      so the admin password is not involved in any of it.
+    - /usr/local/bin/lab-dashboard-creds, which returns the Wazuh web interface login so the
+      dashboard can show it. This is the one thing here that hands over a password. It is read
+      from the installer's own log, printed on stdout rather than passed as an argument to
+      anything, and travels back over the same SSH connection as everything else. If you would
+      rather the dashboard never saw it, leave this file out: the credentials panel then says
+      it could not read it, and nothing else changes.
 
   Linux endpoint
     - labadmin joins the wazuh group.
@@ -86,9 +92,10 @@ if [ "$ROLE" = "manager" ]; then
 #!/usr/bin/env python3
 # Cluster health, alert volume and retention policy state, as one JSON document.
 #
-# Authenticates with the indexer's admin certificate rather than the admin password. The
-# password sits in a root-owned install log and there is no reason to read it, copy it, or risk
-# it appearing in a process list. The certificate never leaves this machine either.
+# Authenticates with the indexer's admin certificate rather than the admin password. Querying
+# does not need the password, so this does not go near the install log, and the certificate
+# never leaves this machine. Handing the password to somebody who asks for it is a separate
+# job, done by lab-dashboard-creds.
 import json, subprocess
 
 CERTS = '/etc/wazuh-indexer/certs'
@@ -144,6 +151,41 @@ print(json.dumps(out))
 INDEXER
   chmod 0755 /usr/local/bin/lab-dashboard-indexer
   echo "  installed /usr/local/bin/lab-dashboard-indexer"
+
+  cat > /usr/local/bin/lab-dashboard-creds <<'CREDS'
+#!/usr/bin/env python3
+# The Wazuh web interface login, as one JSON document.
+#
+# The installer generates the admin password and writes it into its own log under /root. Nothing
+# else on this machine keeps it anywhere readable, so this is the one value the dashboard cannot
+# reach without root.
+#
+# It is printed on stdout rather than passed as an argument to anything, so it never appears in
+# a process list, and it goes back over the SSH connection the dashboard already has open.
+#
+# The first Password: line is the admin one. configure-dashboard.sh reads it the same way and
+# authenticates with the result, so the format is not being guessed at here.
+import json, re
+
+LOG = '/root/wazuh-lab-install/install.log'
+out = {'username': 'admin'}
+try:
+    with open(LOG, encoding='utf-8', errors='replace') as handle:
+        for line in handle:
+            found = re.search(r'Password:\s*(\S+)', line)
+            if found:
+                out['password'] = found.group(1)
+                break
+    if 'password' not in out:
+        out['error'] = 'No Password: line in ' + LOG
+except Exception as problem:
+    out['error'] = str(problem)
+print(json.dumps(out))
+CREDS
+  # Root only. It reads a root-owned file, so any other caller would get a traceback rather
+  # than an answer, and there is no reason for it to be runnable by anyone else.
+  chmod 0750 /usr/local/bin/lab-dashboard-creds
+  echo "  installed /usr/local/bin/lab-dashboard-creds"
 fi
 
 if [ "$ROLE" = "endpoint" ] && [ -f /tmp/lab-invoke-scenario.sh ]; then
@@ -177,7 +219,7 @@ TMP=$(mktemp)
   done
   printf '\n'
   if [ "$ROLE" = "manager" ]; then
-    printf 'Cmnd_Alias WAZUH_LAB_READ = /var/ossec/bin/agent_control -l, /usr/local/bin/lab-dashboard-indexer\n'
+    printf 'Cmnd_Alias WAZUH_LAB_READ = /var/ossec/bin/agent_control -l, /usr/local/bin/lab-dashboard-indexer, /usr/local/bin/lab-dashboard-creds\n'
     printf '%s ALL=(root) NOPASSWD: WAZUH_LAB_SVC, WAZUH_LAB_READ\n' "$SUDO_USER"
   elif [ -x /usr/local/bin/lab-scenario ]; then
     # Six exact invocations, arguments included. Not a wildcard: these scripts deliberately

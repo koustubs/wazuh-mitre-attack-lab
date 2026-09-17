@@ -26,6 +26,10 @@
     }
   }
   * { box-sizing: border-box; }
+  /* The hidden attribute only works through the UA rule [hidden]{display:none}, which any
+     author rule setting display beats on specificity. .gatefoot is display:flex, so its
+     hidden attribute did nothing at all until this. */
+  [hidden] { display: none !important; }
   body {
     margin: 0 auto; background: var(--bg); color: var(--ink); max-width: 1180px; padding: 20px;
     font: 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
@@ -131,9 +135,92 @@
   .notice { font-size: 12.5px; padding: 7px 11px; border-radius: 7px; border: 1px solid var(--line-strong); background: var(--card); }
   .notice.error { border-color: var(--danger); color: var(--danger); background: var(--danger-soft); }
   footer { margin-top: 20px; font-size: 12px; color: var(--ink-faint); line-height: 1.6; }
+
+  /* ---- Preflight gate ----------------------------------------------------------------
+     The dashboard is laid out first and then covered, rather than built once the checks
+     pass, so that when the gate opens there is a finished page underneath it rather than
+     one assembling itself in front of you. */
+  #app { transition: opacity .5s ease, transform .55s cubic-bezier(.2,.72,.25,1); }
+  body.gated { overflow: hidden; }
+  body.gated #app { opacity: 0; transform: scale(.99); pointer-events: none; }
+
+  #gate { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center;
+          justify-content: center; padding: 22px; background: var(--bg);
+          transition: background-color .4s ease .12s; }
+  body.gate-open #gate { background: transparent; pointer-events: none; }
+
+  .gatebox { width: 100%; max-width: 560px; background: var(--card); border: 1px solid var(--line);
+             border-radius: 14px; padding: 22px 24px 20px; box-shadow: 0 12px 44px rgba(0,0,0,.10);
+             transition: max-width .6s cubic-bezier(.2,.72,.25,1), transform .6s cubic-bezier(.2,.72,.25,1),
+                         opacity .42s ease .16s, box-shadow .5s ease; }
+  /* 1180px is the body's own max-width, so the box opens out to exactly the width of the
+     dashboard it is handing over to rather than to an arbitrary size. */
+  body.gate-open .gatebox { max-width: 1180px; transform: scale(1.012); opacity: 0; box-shadow: none; }
+
+  .gatebox h2 { font-size: 15px; font-weight: 600; margin: 0 0 3px; letter-spacing: -0.01em; }
+  .gatesub { margin: 0 0 15px; font-size: 12.5px; color: var(--ink-soft); }
+  /* The list collapses first, so the box has something to shrink from before it opens out. */
+  #gateChecks { transition: opacity .3s ease, max-height .38s ease; max-height: 62vh; overflow-y: auto; }
+  body.gate-done #gateChecks { opacity: 0; max-height: 0; overflow: hidden; }
+  body.gate-done #gateFoot { display: none; }
+
+  .check { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line); }
+  .check:first-child { border-top: 0; padding-top: 0; }
+  .mark { flex: none; margin-top: 1px; font-size: 10px; font-weight: 600; letter-spacing: .05em;
+          text-transform: uppercase; padding: 2px 7px; border-radius: 999px; min-width: 64px;
+          text-align: center; border: 1px solid transparent; }
+  .check.pass .mark { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .check.warn .mark { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+  .check.fail .mark { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+  .check.unknown .mark { color: var(--ink-faint); border-color: var(--line-strong); }
+  .cname { font-size: 13px; font-weight: 600; }
+  .cdetail { font-size: 12.5px; color: var(--ink-soft); }
+  .cfix { font-size: 12.5px; margin-top: 4px; }
+  .cfix span { color: var(--ink-faint); }
+  .gatefoot { display: flex; align-items: center; gap: 9px; margin-top: 16px; }
+  .gateok { font-size: 13px; color: var(--accent); }
+  button.linkish { border-color: transparent; color: var(--ink-soft); padding: 6px 4px; }
+  button.linkish:hover:not(:disabled) { color: var(--ink); border-color: transparent; text-decoration: underline; }
+
+  /* ---- Lab access -------------------------------------------------------------------- */
+  .cred { display: grid; grid-template-columns: minmax(140px, 200px) 1fr; gap: 3px 16px;
+          padding: 9px 0; border-top: 1px solid var(--line); align-items: start; }
+  .cred:first-child { border-top: 0; padding-top: 1px; }
+  .credname { font-size: 13px; font-weight: 600; }
+  .credbody { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .credline { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .credline .k { color: var(--ink-faint); font-size: 11px; text-transform: uppercase;
+                 letter-spacing: .05em; min-width: 66px; }
+  .credval { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; word-break: break-all; }
+  .credval.masked { letter-spacing: .14em; color: var(--ink-faint); }
+  /* Long enough to need its own line, so let it take one instead of pushing the label away. */
+  .credprob { font-size: 12.5px; color: var(--warn); flex: 1 1 240px; min-width: 0; }
+  .crednote { font-size: 12px; color: var(--ink-faint); margin-top: 1px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #app, .gatebox, #gate, #gateChecks, .bar > i { transition: none; }
+    .bar.live > i { animation: none; }
+  }
 </style>
 </head>
-<body>
+<body class="gated">
+
+<div id="gate">
+  <div class="gatebox">
+    <h2 id="gateTitle">Checking this machine</h2>
+    <p class="gatesub" id="gateSub">Confirming the lab can run here before the dashboard opens.</p>
+    <div id="gateChecks"><span class="faint">Reading the host...</span></div>
+    <div class="gatefoot" id="gateFoot" hidden>
+      <button type="button" class="primary" id="gateGo" hidden>Open the dashboard</button>
+      <button type="button" id="gateRetry">Check again</button>
+      <span class="spacer"></span>
+      <button type="button" class="linkish" id="gateSkip" hidden>Open anyway</button>
+    </div>
+    <div class="gateok" id="gateOk" hidden>Everything checks out.</div>
+  </div>
+</div>
+
+<div id="app">
 
 <div class="topbar">
   <h1>Wazuh lab dashboard</h1>
@@ -148,6 +235,16 @@
 <div class="panel labbar" id="labbar"><span class="muted">Connecting...</span></div>
 
 <div class="panel hostbar" id="hostbar"><span class="muted">Connecting...</span></div>
+
+<div class="panel">
+  <div class="panelhead">
+    <h3>Lab access</h3>
+    <span class="faint" id="accessMeta"></span>
+    <span class="spacer"></span>
+    <button type="button" class="mini" id="credsReveal">Show passwords</button>
+  </div>
+  <div id="creds"><span class="faint">Reading...</span></div>
+</div>
 
 <div class="panel">
   <h3>Lab health</h3>
@@ -228,6 +325,8 @@
   Serving on 127.0.0.1 only. Opening this page performs no action: every change needs a click.<br>
   This is a monitor, not the way the lab is built. Follow the deployment guide for that.
 </footer>
+
+</div><!-- /#app -->
 
 <script>
 const TOKEN = "__LAB_TOKEN__";
@@ -607,6 +706,16 @@ function render(data) {
   });
 }
 
+function fallbackCopy(text, done) {
+  const t = document.createElement("textarea");
+  t.value = text;
+  t.style.cssText = "position:fixed;opacity:0";
+  document.body.appendChild(t);
+  t.select();
+  try { document.execCommand("copy"); done(); } catch (e) { note("Could not copy.", "error"); }
+  t.remove();
+}
+
 function refresh() {
   return api("/api/state").then(render).catch(() => {
     document.getElementById("hostbar").innerHTML =
@@ -615,6 +724,16 @@ function refresh() {
 }
 
 document.addEventListener("click", ev => {
+  const copyBtn = ev.target.closest("button[data-copy]");
+  if (copyBtn) {
+    const text = copyBtn.dataset.copy;
+    const done = () => { copyBtn.textContent = "Copied"; setTimeout(() => { copyBtn.textContent = "Copy"; }, 1400); };
+    // 127.0.0.1 counts as a secure context, so the clipboard API is available here. The
+    // fallback is for the case where the browser refuses anyway.
+    if (navigator.clipboard) { navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done)); }
+    else { fallbackCopy(text, done); }
+    return;
+  }
   const labBtn = ev.target.closest("button[data-lab]");
   if (labBtn) {
     const act = labBtn.dataset.lab;
@@ -731,7 +850,171 @@ document.addEventListener("visibilitychange", () => {
   else if (!seqRunning) { clearTimeout(timer); }
 });
 
-refresh().then(schedule);
+// ---- Lab access ------------------------------------------------------------------------
+// Fetched once when the gate opens rather than on the 3 second poll: the Wazuh password is an
+// SSH round trip, and there is no sense repeating one every cycle for a value that does not
+// change. Passwords arrive masked and stay masked until asked for.
+let credsData = null, credsShown = false, credsBusy = false;
+
+function copyable(text) {
+  return `<span class="credval">${esc(text)}</span>` +
+         `<button type="button" class="mini" data-copy="${esc(text)}">Copy</button>`;
+}
+
+function renderCreds() {
+  const box = document.getElementById("creds");
+  const meta = document.getElementById("accessMeta");
+  const btn = document.getElementById("credsReveal");
+  if (!credsData) {
+    box.innerHTML = `<span class="faint">${credsBusy ? "Reading..." : "Not read yet."}</span>`;
+    meta.textContent = "";
+    btn.textContent = "Try again";
+    return;
+  }
+  const problems = credsData.entries.filter(e => e.problem).length;
+  meta.textContent = problems ? problems + " not readable" : "";
+  btn.textContent = credsShown ? "Hide passwords" : "Show passwords";
+  box.innerHTML = credsData.entries.map(e => {
+    const lines = [];
+    lines.push(`<div class="credline"><span class="k">where</span>` +
+      (e.link ? `<a class="credval" href="${esc(e.link)}" target="_blank" rel="noopener">${esc(e.target)}</a>`
+              : `<span class="credval">${esc(e.target)}</span>`) + `</div>`);
+    lines.push(`<div class="credline"><span class="k">user</span>${copyable(e.username)}</div>`);
+    if (e.secret) {
+      lines.push(`<div class="credline"><span class="k">password</span>` +
+        (credsShown ? copyable(e.secret)
+                    : `<span class="credval masked">${"\u2022".repeat(Math.min(e.secret.length, 20))}</span>`) +
+        `</div>`);
+    } else {
+      lines.push(`<div class="credline"><span class="k">password</span>` +
+        `<span class="credprob">${esc(e.problem || "Not available.")}</span></div>`);
+    }
+    if (e.note) lines.push(`<div class="crednote">${esc(e.note)}</div>`);
+    return `<div class="cred"><div class="credname">${esc(e.label)}</div>` +
+           `<div class="credbody">${lines.join("")}</div></div>`;
+  }).join("");
+}
+
+function loadCreds() {
+  credsBusy = true;
+  renderCreds();
+  return api("/api/creds").then(d => {
+    credsBusy = false;
+    credsData = d && d.ok ? d : null;
+    renderCreds();
+  }).catch(() => { credsBusy = false; renderCreds(); });
+}
+
+document.getElementById("credsReveal").addEventListener("click", () => {
+  if (!credsData) { loadCreds(); return; }
+  credsShown = !credsShown;
+  renderCreds();
+});
+
+// ---- Preflight gate --------------------------------------------------------------------
+// Nothing is polled until this clears. Starting the 3 second cycle behind a cover would mean
+// SSH round trips against a lab the checks may be about to say is not there at all.
+const MARKS = { pass: "ok", warn: "warn", fail: "blocked", unknown: "unknown" };
+const SOFT = !window.matchMedia || !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let gateDone = false;
+
+function gateRender(data) {
+  document.getElementById("gateChecks").innerHTML = (data.checks || []).map(c => `
+    <div class="check ${esc(c.state)}">
+      <span class="mark">${esc(MARKS[c.state] || c.state)}</span>
+      <div>
+        <div class="cname">${esc(c.label)}</div>
+        <div class="cdetail">${esc(c.detail)}</div>
+        ${c.state !== "pass" && c.fix ? `<div class="cfix"><span>Fix:</span> ${esc(c.fix)}</div>` : ""}
+      </div>
+    </div>`).join("");
+
+  const title = document.getElementById("gateTitle");
+  const sub = document.getElementById("gateSub");
+  const foot = document.getElementById("gateFoot");
+  const go = document.getElementById("gateGo");
+  const skip = document.getElementById("gateSkip");
+  foot.hidden = false;
+  go.hidden = true;
+  skip.hidden = true;
+
+  if (!data.ready) {
+    title.textContent = data.failed + (data.failed === 1 ? " thing to fix first" : " things to fix first");
+    sub.textContent = "The lab will not work until " + (data.failed === 1 ? "this is" : "these are") + " dealt with.";
+    // An escape hatch, deliberately the quiet option. A check that is wrong should not lock
+    // somebody out of their own tool, and every panel below says what it cannot read anyway.
+    skip.hidden = false;
+    return;
+  }
+  if (data.warned) {
+    title.textContent = "Ready, with " + data.warned + " to be aware of";
+    sub.textContent = "Nothing here blocks the lab. Worth reading once before you carry on.";
+    go.hidden = false;
+    return;
+  }
+  title.textContent = "Ready";
+  sub.textContent = data.cpu ? data.cpu : "";
+  foot.hidden = true;
+  document.getElementById("gateOk").hidden = false;
+  setTimeout(gateOpen, 520);
+}
+
+function gateOpen() {
+  if (gateDone) return;
+  gateDone = true;
+  const body = document.body;
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    const g = document.getElementById("gate");
+    if (g) g.remove();
+    body.classList.remove("gated", "gate-done", "gate-open");
+    loadCreds();
+    refresh().then(schedule);
+  };
+  // An animation nobody is watching is just a delay, and a hidden tab throttles the timers it
+  // runs on. Hand over at once instead.
+  if (!SOFT || document.hidden) { finish(); return; }
+
+  // Three beats: the list collapses, the box opens out to the width of the dashboard while it
+  // fades, and the dashboard comes up underneath it.
+  body.classList.add("gate-done");
+  setTimeout(() => { body.classList.add("gate-open"); body.classList.remove("gated"); }, 400);
+  setTimeout(finish, 1060);
+
+  // If the tab is hidden part way through, those two timers are throttled to roughly one a
+  // second and the hand over stalls behind a cover that has already decided to lift. Coming
+  // back to a resolved gate still sitting there is indistinguishable from a hang, so the
+  // deadline is checked against the clock rather than trusted to fire.
+  const dueAt = Date.now() + 1060;
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && Date.now() >= dueAt) finish();
+  });
+}
+
+function gateCheck() {
+  const retry = document.getElementById("gateRetry");
+  retry.disabled = true;
+  document.getElementById("gateChecks").innerHTML = `<span class="faint">Reading the host...</span>`;
+  return api("/api/preflight").then(gateRender).catch(err => {
+    document.getElementById("gateTitle").textContent = "The checks could not be read";
+    document.getElementById("gateSub").textContent =
+      "The window that launched the dashboard may have closed. Run Lab.cmd again, or open the " +
+      "page anyway: every panel below says what it cannot read.";
+    document.getElementById("gateChecks").innerHTML =
+      `<span class="faint">${esc(String(err && err.message ? err.message : err))}</span>`;
+    document.getElementById("gateFoot").hidden = false;
+    // Deliberate. A gate that cannot decide must not be a locked door.
+    document.getElementById("gateSkip").hidden = false;
+  }).then(() => { retry.disabled = false; });
+}
+
+document.getElementById("gateRetry").addEventListener("click", gateCheck);
+document.getElementById("gateGo").addEventListener("click", gateOpen);
+document.getElementById("gateSkip").addEventListener("click", gateOpen);
+
+gateCheck();
 </script>
 </body>
 </html>

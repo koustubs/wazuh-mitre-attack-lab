@@ -7,6 +7,60 @@ fire.
 Open it with `Lab.cmd` at the root of the repository. This is not how the lab gets built; follow
 `deployment-guide.md` for that, once.
 
+## Before it opens
+
+The page starts as a small box that checks the machine, and hands over to the dashboard only once
+nothing is blocking. Ten reads, none of which change anything:
+
+| Check | Why it is here |
+| --- | --- |
+| Administrator rights | Hyper-V does not answer an ordinary session. |
+| Hardware virtualization | SVM on AMD, VT-x on Intel. Off in firmware, and no VM starts at all. |
+| Hyper-V platform | The management service, which is the honest test that the platform is live. |
+| Lab network | The `Wazuh-Lab` switch, and a NAT covering 172.29.70.0/24. |
+| Lab virtual machines | All three present, under the names this tool expects. |
+| Lab credentials | `.lab-secrets`. A fresh clone has none, and this is where that surfaces. |
+| OpenSSH client | Everything read from inside the guests travels over SSH. |
+| Memory headroom | 16 GB for all three. Advisory. |
+| Disk headroom | On whichever drive the VMs are actually on. Advisory. |
+| Autostart locked off | 16 GB should never wake on its own. Advisory. |
+
+The first seven block. The last three warn instead: they say the lab will struggle rather than
+that it cannot start, so they cost one click rather than a fix.
+
+Everything passing opens the dashboard on its own, in about a second. Anything failing leaves the
+box where it is and names the cause and the command that fixes it, with "Check again" beside it.
+
+There is always an "Open anyway". A check that is wrong should not lock you out of your own tool,
+and every panel below already says what it cannot read.
+
+Virtualization is worth one note, because the obvious way to test it is wrong. Once Hyper-V is
+running it owns the virtualization extensions, and `Win32_Processor` then reports
+`VirtualizationFirmwareEnabled` as false, because Windows can no longer see the firmware setting
+it is already using. Reading that field on its own therefore reports "disabled" on a machine
+whose VMs are running. `HypervisorPresent` is tested first for that reason.
+
+## Lab access
+
+The logins, in a panel under the host strip:
+
+| Where | Who |
+| --- | --- |
+| Wazuh web interface | `https://172.29.70.10`, user `admin` |
+| Manager | `labadmin@172.29.70.10`, key or console password |
+| Linux endpoint | `labadmin@172.29.70.30`, key or console password |
+| Windows endpoint | `labadmin`, at the Hyper-V console |
+
+Addresses and usernames are always shown. Passwords arrive masked and stay masked until you press
+"Show passwords", and every value has a Copy button.
+
+The console password is read from `.lab-secrets` at the moment of the request. The Wazuh password
+is different: the installer generates it and writes it into a root-owned log, so that one needs
+the one-time setup below. Until then the row says so rather than showing an empty field.
+
+Both are fetched once when the page opens rather than on the poll. A password does not change
+every three seconds and there is no sense paying an SSH round trip for one that has not.
+
 ## Bringing the lab up
 
 One button. It runs in order, because the agents need a manager to connect to:
@@ -98,8 +152,14 @@ It asks for the lab account's sudo password, uses it for that run, and stores no
 - A sudoers rule permitting exactly `systemctl start`, `stop` and `restart` on the named Wazuh
   units, `agent_control -l`, and the indexer summary. Nothing else.
 - `/usr/local/bin/lab-dashboard-indexer` on the manager, which reports cluster health, alert
-  volume and retention. It authenticates with the indexer's admin certificate, so no password is
-  read, copied, or put in a process list.
+  volume and retention. It authenticates with the indexer's admin certificate, so the admin
+  password is not involved in any of it.
+- `/usr/local/bin/lab-dashboard-creds`, which returns the Wazuh web interface login for the Lab
+  access panel. This is the one thing here that hands over a password. It is read from the
+  installer's own log and printed on stdout rather than passed as an argument, so it never
+  appears in a process list, and it comes back over the SSH connection already open. Leave this
+  file off the manager if you would rather the dashboard never saw it: the panel then says it
+  could not read it, and nothing else changes.
 - On the Linux endpoint, the scenario driver at a stable path plus the six exact sudoers entries.
 
 Every sudoers file is checked with `visudo` before installation, and nothing is written if that
@@ -207,6 +267,11 @@ action and does not hold it. That is a plaintext password on disk. It already ex
 already gitignored, and it is already how this lab documents its console access, so nothing new is
 exposed, but nothing is improved either.
 
+The Lab access panel shows real passwords on request, on that same loopback-only, token-gated
+page. They arrive masked. Worth being plain about what changed: before this, no Wazuh password
+was read off the manager at all. Now one is, when you ask for it. The property kept is that it is
+never an argument to anything and so never reaches a process list.
+
 ## If something goes wrong
 
 **The page says there is no answer from the server.** The console window that launched it has
@@ -231,3 +296,7 @@ exactly which capability is missing.
 
 **A scenario reports that it returned nothing.** It did not run. The most likely cause on Linux is
 that the one-time setup has not been run on that endpoint; check with `sudo -l` as `labadmin`.
+
+**The opening box says virtualization is off, but your VMs run.** Read the note under "Before it
+opens". If `HypervisorPresent` is false on a host with running VMs, something is wrong with WMI
+rather than with the firmware; Task Manager, Performance, CPU settles it in one look.
