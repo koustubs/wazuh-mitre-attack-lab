@@ -350,6 +350,10 @@ wazuh-threat-detection/
   right order and another takes it down in the reverse order.
 - The dashboard reads detection coverage, the alert pipeline and the manager log, and can trigger
   any of the three scenarios on either endpoint.
+- `Enable-LabDashboard.ps1` was run against the live lab on 21 September and completed. Both VMs
+  report `labadmin` added to the `wazuh` group, `lab-dashboard-indexer`, `lab-dashboard-creds`
+  and `lab-scenario` installed, and a validated sudoers file on each. Its own closing check
+  answers yes to agent state, indexer summary and the alert log.
 
 **Still open:**
 
@@ -363,9 +367,8 @@ wazuh-threat-detection/
   on the host, varied failed-logon counts working on real hardware, staff rotation producing
   sessions. The full 14 hour run has not been made, and is now a specific question rather than
   a prerequisite for anything.
-- `Enable-LabDashboard.ps1` has still never been run, so the dashboard's read access to alerts,
-  agents and the indexer is untested end to end. `run-campaign.sh` is not in its sudoers grant
-  either, so starting a campaign from the dashboard would prompt for a password.
+- `run-campaign.sh` is not in the dashboard's sudoers grant, so starting a campaign from the
+  dashboard would prompt for a password. Everything else the dashboard needs is granted.
 
 **Housekeeping:**
 

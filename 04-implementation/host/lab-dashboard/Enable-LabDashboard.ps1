@@ -56,8 +56,32 @@ Write-Host 'Restricting the SSH key to your account only...'
 
 $sshCommon = @(
     '-i', $keyPath, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no',
-    '-o', 'UserKnownHostsFile=NUL', '-o', 'ConnectTimeout=8'
+    '-o', 'UserKnownHostsFile=NUL', '-o', 'ConnectTimeout=8',
+    # Without this, every call prints "Permanently added ... to the list of known hosts" on
+    # stderr, because the known hosts file is the null device and nothing is ever remembered.
+    '-o', 'LogLevel=ERROR'
 )
+
+function Invoke-Native {
+    <#
+    Runs a native executable and decides success from its exit code alone.
+
+    Windows PowerShell 5.1 wraps each stderr line from a native command in an ErrorRecord when
+    the stream is redirected, and $ErrorActionPreference = 'Stop' then promotes that to a
+    terminating error even though the process exited 0. ssh's host key notice alone was enough
+    to abort this script at the first scp, reporting the warning text as though it were the
+    failure. Sync-LabCampaign.ps1 hit the same thing and carries the same helper.
+    #>
+    param([Parameter(Mandatory)][string]$Exe, [Parameter(Mandatory)][string[]]$Arguments)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & $Exe @Arguments 2>&1
+        return [pscustomobject]@{ Code = $LASTEXITCODE; Output = $out }
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
 
 Write-Host ''
 Write-Host 'Enter the sudo password for the lab account. It is used for this run only and not stored.'
@@ -263,12 +287,27 @@ function Invoke-Setup {
     [IO.File]::WriteAllText($localFile, ($setupScript -replace "`r`n", "`n"), (New-Object Text.UTF8Encoding $false))
     try {
         if ($Role -eq 'endpoint') {
-            & scp.exe @sshCommon $scenarioPath ("{0}@{1}:/tmp/lab-invoke-scenario.sh" -f $User, $Address) 2>&1 | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "Could not copy the scenario driver to $Address." }
+            $r = Invoke-Native -Exe 'scp.exe' -Arguments ($sshCommon + @(
+                $scenarioPath, ("{0}@{1}:/tmp/lab-invoke-scenario.sh" -f $User, $Address)))
+            if ($r.Code -ne 0) {
+                throw ("Could not copy the scenario driver to {0}: {1}" -f
+                       $Address, (($r.Output | Out-String) -replace '\s+', ' ').Trim())
+            }
         }
-        & scp.exe @sshCommon $localFile ("{0}@{1}:/tmp/lab-dashboard-setup.sh" -f $User, $Address) 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Could not copy the setup script to $Address." }
-        $remote = 'sudo -S -p "" sh /tmp/lab-dashboard-setup.sh {0}; rc=$?; rm -f /tmp/lab-dashboard-setup.sh; exit $rc' -f $Role
+        $r = Invoke-Native -Exe 'scp.exe' -Arguments ($sshCommon + @(
+            $localFile, ("{0}@{1}:/tmp/lab-dashboard-setup.sh" -f $User, $Address)))
+        if ($r.Code -ne 0) {
+            throw ("Could not copy the setup script to {0}: {1}" -f
+                   $Address, (($r.Output | Out-String) -replace '\s+', ' ').Trim())
+        }
+        # Not one double quote in this string, deliberately. PowerShell 5.1 re-quotes an
+        # argument on its way to a native executable, and an embedded "" does not survive the
+        # trip: the far side received an unbalanced quote and bash refused the whole line with
+        # "unexpected EOF while looking for matching". sudo -p "" was the only quoted thing
+        # here and it was only silencing the password prompt, which is cosmetic, so it is gone
+        # rather than escaped. Anything that genuinely needs quoting belongs in $setupScript,
+        # which travels as a file and is never parsed by PowerShell or by a shell in between.
+        $remote = 'sudo -S sh /tmp/lab-dashboard-setup.sh {0}; rc=$?; rm -f /tmp/lab-dashboard-setup.sh; exit $rc' -f $Role
         $plain | & ssh.exe @sshCommon ("{0}@{1}" -f $User, $Address) $remote
         if ($LASTEXITCODE -ne 0) { throw "Setup failed on $Address." }
         Write-Host ("  {0} is configured." -f $Address)
@@ -282,7 +321,10 @@ Invoke-Setup -Address $LinuxAddress   -Role 'endpoint'
 
 Write-Host ''
 Write-Host 'Checking what the manager will now answer...'
-$check = & ssh.exe @sshCommon ("{0}@{1}" -f $User, $ManagerAddress) 'sudo -n /var/ossec/bin/agent_control -l >/dev/null 2>&1 && echo agents_ok; sudo -n /usr/local/bin/lab-dashboard-indexer >/dev/null 2>&1 && echo indexer_ok; test -r /var/ossec/logs/alerts/alerts.json && echo alerts_ok' 2>&1
+$check = (Invoke-Native -Exe 'ssh.exe' -Arguments ($sshCommon + @(
+    ("{0}@{1}" -f $User, $ManagerAddress),
+    'sudo -n /var/ossec/bin/agent_control -l >/dev/null 2>&1 && echo agents_ok; sudo -n /usr/local/bin/lab-dashboard-indexer >/dev/null 2>&1 && echo indexer_ok; test -r /var/ossec/logs/alerts/alerts.json && echo alerts_ok'
+))).Output
 foreach ($capability in @(
     @{ Token = 'agents_ok';  Text = 'agent state' },
     @{ Token = 'indexer_ok'; Text = 'indexer summary' },
