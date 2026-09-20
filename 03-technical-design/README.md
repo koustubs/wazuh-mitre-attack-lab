@@ -2,6 +2,10 @@
 
 **This stack is not confirmed for implementation. It needs further research, feasibility checks, and mentor review.** I have not deployed or tested the prototype yet.
 
+> Left as submitted, which is why everything below is conditional. The stack was confirmed
+> almost unchanged and built: see [04-implementation/README.md](../04-implementation/README.md).
+> Two things here did not survive contact, and both are marked where they appear.
+
 ## Proposed direction
 
 To support the six cases and acceptance criteria in step 2, I propose a virtual lab with a central Wazuh deployment and separate Windows and Linux endpoints. I would use Wazuh's existing components and small scripts to make setup and testing repeatable.
@@ -20,7 +24,7 @@ I am targeting the 4.14.x branch, which is the current stable release. Wazuh 5.0
 
 | Area | Initial choice | Reason for considering it |
 | --- | --- | --- |
-| Lab environment | Hyper-V, three Gen 2 VMs, and an internal lab switch. | Separate the platform and endpoints, with checkpoints for endpoint resets. Hyper-V is already enabled on the host and is native to Windows 11 Pro. Its Gen 2 VMs supply TPM 2.0 and Secure Boot, which a Windows 11 guest requires. I moved off VirtualBox because it cannot run properly alongside an active Hyper-V hypervisor. |
+| Lab environment | Hyper-V, three Gen 2 VMs, and an internal lab switch. | Separate the platform and endpoints, with checkpoints for endpoint resets. Hyper-V is already enabled on the host and is native to Windows 11 Pro. Its Gen 2 VMs supply TPM 2.0 and Secure Boot, which a Windows 11 guest requires. VirtualBox is ruled out, because it cannot run properly alongside an active Hyper-V hypervisor. |
 | Central platform | Ubuntu Server 24.04 LTS and Wazuh `4.14.x` release, using an all-in-one installation. | Keep the manager, indexer, and dashboard together. |
 | Windows endpoint | Windows 11, Wazuh agent, and selected Windows Security events. | Collect authentication, account-creation, and scheduled-task evidence with appropriate audit policies. |
 | Linux endpoint | Ubuntu Server 24.04 LTS, Wazuh agent, authentication logs, Linux Audit, and targeted file monitoring. | Collect login, account-management, and cron evidence. Verify actual fields before writing rules. |
@@ -29,8 +33,9 @@ I am targeting the 4.14.x branch, which is the current stable release. Wazuh 5.0
 
 Wazuh's Quickstart recommends 4 vCPU, 8 GiB RAM, and 50 GB storage for 1 to 25 agents and a 90-day alert-storage estimate. This is a reference for the central VM; endpoints, snapshots, and the host OS need additional resources. Retention still needs review. [This is the Wazuh Quickstart guidance on installation and resource requirements](https://documentation.wazuh.com/current/quickstart.html).
 
-### Detection logic 
-Detection for S1 uses Wazuh's frequency options, and the ATT&CK mapping is declared on the rule itself:
+### Detection logic
+
+Detection for S1 would use Wazuh's frequency options, with the ATT&CK mapping declared on the rule itself:
 
 ```xml
 <rule id="100001" level="10" frequency="6" timeframe="120">
@@ -43,6 +48,13 @@ Detection for S1 uses Wazuh's frequency options, and the ATT&CK mapping is decla
 ```
 
 Rule IDs, thresholds and the parent SID need confirming against my actual install.
+
+> **Did not survive contact.** The parent SID above is wrong and the rule as written would
+> never have fired. A `Failed password` line matches rule 5760, which is itself a child of
+> 5716, so hanging a frequency rule off 5716 matches nothing. The built rule is 100111 with
+> `<if_matched_sid>100110</if_matched_sid>`, where 100110 sits on 5760. Confirming the parent
+> SID against a real install was the right instinct and it is why this was caught. See
+> [lab_rules.xml](../04-implementation/manager/lab_rules.xml).
 
 ## Working methods
 
@@ -71,4 +83,9 @@ I would use `wazuh-logtest` for parsing and rule checks, followed by live endpoi
 - Confirm host capacity, Windows VM requirements, and snapshot storage.
 - Verify OS/Wazuh compatibility, audit settings, fields, and existing rules against actual events. Select the Windows login method and failure records for S1. Assess whether Windows needs additional process evidence from Sysmon.
 - Review relevant Atomic Red Team tests, including prerequisites, actions, and cleanup. [This is the test library being considered](https://github.com/redcanaryco/atomic-red-team).
+  > **Did not survive contact.** Atomic Red Team was not used. The three scenarios are small
+  > enough to drive from purpose-written scripts that clean up after themselves
+  > (`04-implementation/linux/invoke-scenario.sh` and its Windows counterpart), and those also
+  > run a benign comparison, which the library does not. Pulling in a dependency to execute
+  > six commands would have added a supply chain to a lab that has none.
 - Agree thresholds, retention, schedule, and report format. Define lab access controls, agent enrolment, and authenticated connections.

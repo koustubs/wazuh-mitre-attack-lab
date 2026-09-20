@@ -1,5 +1,10 @@
 # 1. Context Analysis
 
+> Written before any of the lab existed and left as submitted, so it reads as a proposal
+> throughout. What was actually built is in
+> [04-implementation/README.md](../04-implementation/README.md), and where the two disagree the
+> implementation is what happened.
+
 ## My understanding of the project
 
 My task is to implement threat detection with Wazuh across a Windows and a Linux machine, and to use MITRE ATT&CK to select the behaviours to detect and explain the resulting alerts.
@@ -8,7 +13,7 @@ My task is to implement threat detection with Wazuh across a Windows and a Linux
 
 I propose a controlled lab with one Windows machine, one Linux machine, and a central Wazuh deployment. My initial focus is login activity, local account creation, and scheduled tasks or jobs.
 
-I chose these areas because they cover attempts to access accounts and behaviours that can help maintain access or recurring execution. Each has a Windows and Linux equivalent that I can demonstrate using built-in system functions.
+These areas cover attempts to access accounts, and behaviours that can help maintain access or recurring execution. Each has a Windows and Linux equivalent that I can demonstrate using built-in system functions.
 
 ## Role of Wazuh
 
@@ -34,7 +39,7 @@ Wazuh ships with ATT&CK mappings on its built-in rules, and a custom rule declar
 - I need to verify event collection and rule behaviour before claiming a detection works.
 - Windows and Linux need separate tests because their event sources and some technique mappings differ.
 - Account creation and scheduled jobs can be legitimate. Alerts need context for an analyst to assess them.
-- I will limit coverage claims to the procedures and conditions I have tested.
+- I will limit coverage claims to the procedures and conditions I test.
 
 ## System context
 
