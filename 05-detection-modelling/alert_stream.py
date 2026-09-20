@@ -35,7 +35,53 @@ PAD = 0
 RULE_IDS = sorted(RULES)
 RULE_TO_IX = {r: i + 1 for i, r in enumerate(RULE_IDS)}
 IX_TO_RULE = {i + 1: r for i, r in enumerate(RULE_IDS)}
-VOCAB = len(RULE_IDS) + 1
+
+
+class Vocabulary:
+    """The set of rule ids a dataset actually contains, and their integer indices.
+
+    The lab vocabulary above is fixed because the rules are ours and there are ten of them. A
+    public dataset brings its own, so the vocabulary has to be a property of the data rather
+    than of this file. It is written beside the episodes it describes and loaded with them,
+    which is also what stops a model being silently fed indices from a different dataset.
+
+    Index 0 is padding and the last index is the unknown rule. Building the vocabulary from
+    the training sources alone and letting a held out source fall through to unknown is the
+    point of having that slot: an unseen signature is information, not an error.
+    """
+
+    def __init__(self, rule_ids, names=None):
+        self.rule_ids = sorted(int(r) for r in rule_ids)
+        self.to_ix = {r: i + 1 for i, r in enumerate(self.rule_ids)}
+        self.unk = len(self.rule_ids) + 1
+        self.size = len(self.rule_ids) + 2
+        self.names = {int(k): tuple(v) for k, v in (names or {}).items()}
+
+    def index(self, rule_id):
+        return self.to_ix.get(int(rule_id), self.unk)
+
+    def describe(self, rule_id):
+        return self.names.get(int(rule_id), ("", 0))[0]
+
+    def save(self, path):
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            json.dump({"ruleIds": self.rule_ids,
+                       "names": {str(k): list(v) for k, v in self.names.items()}},
+                      fh, indent=1, sort_keys=True)
+
+    @classmethod
+    def load(cls, path):
+        with open(path, encoding="utf-8-sig") as fh:
+            d = json.load(fh)
+        return cls(d["ruleIds"], d.get("names"))
+
+    @classmethod
+    def from_episodes(cls, episodes):
+        return cls(sorted({al["ruleId"] for e in episodes for al in e["alerts"]}))
+
+
+LAB_VOCAB = Vocabulary(RULE_IDS, RULES)
+VOCAB = LAB_VOCAB.size
 
 # The frequency rule that the whole labelling scheme is built around. Rule 100111 is
 # frequency="6" timeframe="120", so six failed SSH passwords inside two minutes produce one of

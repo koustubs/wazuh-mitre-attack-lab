@@ -7,6 +7,18 @@ handful, not a dataset.
 
 `04-implementation/linux/run-campaign.sh` turns one run into a night of them.
 
+> **Read this next to the public data first.** A campaign is no longer the only way to get
+> numbers. `05-detection-modelling/import-ait.py` brings in 2.6 million labelled Wazuh alerts
+> from eight networks, which is what the modelling results are now measured on, and it took an
+> afternoon rather than a night.
+>
+> That does not make a campaign optional, because the two answer different questions. The
+> public data has none of our rules in it: no sshd brute force, no account creation, no FIM,
+> and 5501 and 5502 are the whole overlap. So it can say whether reading a sequence of alerts
+> beats counting them, and only a campaign can say whether **these** rules separate an attacker
+> from an administrator. Run one when that is the question being asked, rather than to get a
+> model trained.
+
 ## What it produces
 
 A campaign is a run of several hours made of **episodes**. An episode is one intent carried out
