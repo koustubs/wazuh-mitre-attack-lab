@@ -14,6 +14,10 @@ detection cases are proven on live endpoints, and alerts are searchable in the i
 | 2. Define scope and problem | [Problem statement and scope](02-scope-and-problem/problem-and-scope.md) | Complete |
 | 3. Establish technical building blocks and stack | [Stack and approach](03-technical-design/README.md) | Complete |
 | 4. Build the functionality | [Implementation and results](04-implementation/README.md) | Complete |
+| 5. Detection modelling | [Can a model read a run of alerts?](05-detection-modelling/README.md) | Measured, and the answer is no |
+
+Step 5 is beyond the four step brief. It exists because the mentor raised using PyTorch to find
+patterns, and that deserved a measured answer rather than an opinion.
 
 For the full picture including what was hit along the way and what comes next, read
 [PROJECT-STATUS.md](PROJECT-STATUS.md). To rebuild the lab, start with the
@@ -61,6 +65,32 @@ The frequency rules were also tested at their edges. The 120 second window genui
 counting is per agent rather than global, so the rule will not correlate one campaign spread
 across several machines. Both results are recorded in
 [validation status](04-implementation/evidence/validation-status.md).
+
+## Does a model beat the rules?
+
+The six rules each judge one event in isolation. The obvious next question is whether something
+reading a *run* of alerts does better, and whether that something needs to be a neural network.
+
+Tested on the [AIT Alert Data Set](https://zenodo.org/records/8263181): 2.6 million real Wazuh
+alerts from eight simulated enterprise networks, each with a labelled multi-step intrusion. Each
+network was held out in turn and the models trained on the other seven.
+
+| | f1 | average precision |
+| --- | --- | --- |
+| best single Wazuh rule | 0.245 | 0.161 |
+| GRU over the alert sequence, in PyTorch | 0.180 | 0.199 |
+| logistic regression on counts and timing | **0.292** | **0.249** |
+| random | | 0.021 |
+
+**Logistic regression wins all eight folds. The GRU wins none.** On this evidence a sequence
+model is not justified for this problem: within a five minute window, which rules fired and how
+bursty they were carries the signal, and the order adds little on top.
+
+Two caveats kept in the open. None of the three is deployable, since the best operating point
+catches a fifth of intrusions and opening it up produces hundreds of false positives at a 2%
+base rate. And the public data contains none of rules 100100 to 100113, so this measures the
+method rather than this lab's own detections. [The full write-up](05-detection-modelling/README.md)
+covers both.
 
 ## Scope
 

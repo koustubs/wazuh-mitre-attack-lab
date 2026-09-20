@@ -1,9 +1,11 @@
 # Project status and handover
 
-**Updated:** 11 September 2026
+**Updated:** 21 September 2026
 **State:** Steps 1 to 4 complete. Lab is built and running. All six detection cases proven on
 live endpoints, alerts confirmed rendering in the dashboard, and the frequency rule edge cases
-characterised. Next phase is optimisation and packaging for one-click deployment.
+characterised. A fifth step beyond the brief, detection modelling, has been measured and
+reported: a sequence model does not beat logistic regression on 2.6 million real alerts.
+Remaining work is packaging and presentation.
 
 This file records where the project started, everything that happened, where it stands now, and
 what someone picking it up needs to know. It is written so that a person who has never seen the
@@ -38,6 +40,7 @@ what most of this file covers.
 | 2. Problem and scope | `02-scope-and-problem/` | Complete. Defines S1 to S3 and acceptance criteria R1 to R5. |
 | 3. Technical design | `03-technical-design/` | Complete. Stack pinned to Wazuh 4.14.x with the 5.0 beta transition acknowledged. |
 | 4. Implementation | `04-implementation/` | Complete. See `04-implementation/README.md` for full results. |
+| 5. Detection modelling | `05-detection-modelling/` | Beyond the brief. Measured and reported. See section 5b. |
 
 The PDF sent to the mentor is at `docs/Wazuh-Threat-Detection-Proposal.pdf` and covers steps 1
 to 3 only. It predates the build and has not been regenerated.
@@ -133,6 +136,49 @@ Against step 2's criteria: **R1 to R5 are met.**
 
 ---
 
+## 5b. Detection modelling, and what it found
+
+Beyond the brief. The mentor raised using PyTorch to find patterns. That was worth testing
+properly rather than answering with an opinion, and testing it properly meant having data,
+a baseline, and an evaluation that could not flatter whatever got built.
+
+The data problem was the real one. The lab had nine recorded runs. Two routes were built:
+`04-implementation/linux/run-campaign.sh` to generate a night of labelled episodes here, and
+`05-detection-modelling/import-ait.py` to import the
+[AIT Alert Data Set](https://zenodo.org/records/8263181), 2.6 million real Wazuh alerts from
+eight simulated enterprise networks under CC-BY. The public route was taken first because it
+was an afternoon rather than a night, and because eight independent networks is a stronger
+test than one host.
+
+Each network held out in turn, trained on the other seven:
+
+| | f1 | average precision |
+| --- | --- | --- |
+| best single Wazuh rule | 0.245 (sd 0.134) | 0.161 (sd 0.092) |
+| GRU over the alert sequence | 0.180 (sd 0.112) | 0.199 (sd 0.081) |
+| logistic regression on counts and timing | **0.292** (sd 0.121) | **0.249** (sd 0.097) |
+| random | | 0.021, the base rate |
+
+**Logistic regression wins all eight folds. The GRU wins none, mean margin -0.049.** A sequence
+model is not justified for this problem on this evidence.
+
+Three things that should be read with it:
+
+- **Nothing here is deployable.** Best operating point was precision 1.000 at recall 0.225.
+  Opened up for recall it produces 917 false positives on 2,442 windows. That is what a 2% base
+  rate does, and it is the honest state of the art here rather than a failure of the modelling.
+- **The synthetic results were measuring the generator.** On `make-synthetic.py` output every
+  model scored near the ceiling, logistic at f1 1.000. The same model scores 0.249 average
+  precision on real alerts. Synthetic numbers in this repo are evidence the code runs, nothing
+  more, and the modelling README says so.
+- **This does not test the lab's own rules.** No public dataset contains 100100 to 100113;
+  5501 and 5502 are the entire overlap with AIT. Whether these six rules separate an attacker
+  from an administrator in sequence is still open, and `run-campaign.sh` is what would answer
+  it. That is now a specific question rather than a blocker, and the pipeline it would feed is
+  built and proven.
+
+---
+
 ## 6. Problems hit, and what fixed them
 
 This section exists because most of these will recur for anyone rebuilding the lab.
@@ -207,6 +253,7 @@ wazuh-threat-detection/
   SECURITY.md                   what is excluded, and the pre-publication checklist
   docs/
     fresh-clone.md              what a clone does not contain, and how to rebuild it
+    collecting-a-dataset.md     how to record a labelled campaign, and when it is worth it
   01-context-analysis/          step 1, with system context diagram
   02-scope-and-problem/         step 2, scenarios and acceptance criteria
   03-technical-design/          step 3, stack and approach
@@ -220,6 +267,7 @@ wazuh-threat-detection/
       New-WindowsSeed.ps1       autounattend ISO for Windows
       LabConsole.ps1            headless VM console over WMI
       Get-LabHost.ps1           host capacity preflight
+      Sync-LabCampaign.ps1      pulls campaign records off the endpoint as they are written
       .lab-secrets/             gitignored: keys, password, seed images
       lab-dashboard/
         Start-LabDashboard.ps1  the dashboard server, and the lab up and down sequences
@@ -230,7 +278,7 @@ wazuh-threat-detection/
       configure-manager.sh      lab rules and agent identities
       configure-dashboard.sh    index pattern the UI needs in order to render anything
       lab_rules.xml             the six detection rules
-    linux/                      agent install and scenario driver
+    linux/                      agent install, scenario driver, and run-campaign.sh
     windows/                    agent install and scenario driver
     tests/
       fetch-engine-package.sh   re-fetches the pinned manager package a clone does not have
@@ -241,6 +289,17 @@ wazuh-threat-detection/
       validation-status.md      what is verified and what is not, committable
       rule-checks.json          synthetic rule check output
       live-runs/                live run records
+      campaigns/                gitignored: records pulled off the endpoint by Sync-LabCampaign
+  05-detection-modelling/
+    README.md                   step 5, the measured answer on whether a model beats the rules
+    alert_stream.py             the episode contract and the vocabulary a dataset carries
+    import-ait.py               the AIT alert data set into episodes
+    make-synthetic.py           stand-in alert stream, the only source with the lab's own rules
+    features.py                 episodes into model input, the splits, the metrics
+    baseline.py                 one rule, the degenerate classifier, logistic regression
+    train.py                    embedding, GRU and linear head, in PyTorch
+    evaluate.py                 leave one network out, across all eight
+    data/, models/              gitignored: rebuilt by the scripts above
 ```
 
 ---
@@ -296,6 +355,17 @@ wazuh-threat-detection/
 
 - A single command from bare ISOs. The remaining manual steps are the GRUB edit for Ubuntu
   autoinstall and the key transfer between manager and endpoints.
+- **The exporter.** `run-campaign.sh` records what it launched and when; nothing yet joins
+  those runs to the alerts they caused in the indexer. Until it exists, a campaign produces
+  labels without features and the lab's own rules stay untested in sequence. Alert retention
+  is 90 days, so a campaign run now would still be exportable later.
+- **The campaign itself.** Trialled for one hour on 17 September and correct: records landing
+  on the host, varied failed-logon counts working on real hardware, staff rotation producing
+  sessions. The full 14 hour run has not been made, and is now a specific question rather than
+  a prerequisite for anything.
+- `Enable-LabDashboard.ps1` has still never been run, so the dashboard's read access to alerts,
+  agents and the indexer is untested end to end. `run-campaign.sh` is not in its sudoers grant
+  either, so starting a campaign from the dashboard would prompt for a password.
 
 **Housekeeping:**
 
