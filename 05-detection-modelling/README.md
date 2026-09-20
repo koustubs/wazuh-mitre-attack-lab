@@ -113,8 +113,8 @@ is only about what is needed to extract it.
 base rate, and it is the honest correction to the synthetic result below.
 
 **The synthetic numbers were measuring the generator.** For comparison, on
-`make-synthetic.py` output: rule 100111 alone f1 0.857, GRU f1 0.947, logistic f1 **1.000**,
-GRU average precision 0.995. Everything near the ceiling. `make-synthetic.py` builds in exactly
+`make-synthetic.py` output: rule 100111 alone f1 0.857, GRU f1 0.948 over five seeds, logistic
+f1 **1.000**, GRU average precision 0.997. Everything near the ceiling. `make-synthetic.py` builds in exactly
 two signals, that an attacker brute forces before persisting and moves between steps in
 seconds, and both are linearly separable from counts and a burst measure. A good score there
 was evidence the pipeline ran, not that anything had been detected. Real alerts cost every
