@@ -122,6 +122,13 @@ time rather than from a fresh read, so the document and the screen it came from 
 under `evidence/` because a finding carries account names and source addresses off a live
 endpoint, and everything there is gitignored.
 
+That path is the longest thing here between a change and its consequence: a Python block inside
+a PowerShell here-string, two files substituted into it, base64 encoded, over SSH, onto the
+manager, back as JSON, into a browser. A mistake anywhere in it looks the same from here, which
+is a panel that is quietly wrong. `../../tests/test_dashboard_scoring.py` assembles and runs it
+exactly as this script does, against alerts written so the answers are known in advance. No VM,
+no SSH, about a second. Run it before touching the remote script, `score.py` or `model.json`.
+
 The newest bar is drawn hollow because that window is still filling. Its alert count is low for a
 reason that has nothing to do with what is happening, so its score is not comparable with the
 completed ones and the panel says so rather than drawing a dip that looks like an attack stopping.

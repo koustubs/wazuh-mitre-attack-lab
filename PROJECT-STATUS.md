@@ -307,6 +307,8 @@ wazuh-threat-detection/
     tests/
       fetch-engine-package.sh   re-fetches the pinned manager package a clone does not have
       test_rules.py             offline rule checks against a real engine
+      test_dashboard_scoring.py runs the dashboard's manager script on fabricated alerts,
+                                with no lab up, and checks the severity path end to end
       s1-burst.sh               controlled failure bursts for frequency edge cases
       query-frequency.sh        reads back which rule fired, on which agent
     evidence/
