@@ -14,7 +14,8 @@ detection cases are proven on live endpoints, and alerts are searchable in the i
 | 2. Define scope and problem | [Problem statement and scope](02-scope-and-problem/problem-and-scope.md) | Complete |
 | 3. Establish technical building blocks and stack | [Stack and approach](03-technical-design/README.md) | Complete |
 | 4. Build the functionality | [Implementation and results](04-implementation/README.md) | Complete |
-| 5. Detection modelling | [Can a model read a run of alerts?](05-detection-modelling/README.md) | Measured, and the answer is no |
+| 5. Detection modelling | [Can a model read a run of alerts?](05-detection-modelling/README.md) | Measured, reported, and scoring live |
+| | [Report (PDF)](docs/Detection-Modelling-Report.pdf) | Dataset, training process, every model tried, what won |
 
 Step 5 is beyond the four step brief. It exists because the mentor raised using PyTorch to find
 patterns, and that deserved a measured answer rather than an opinion.
@@ -78,6 +79,7 @@ network was held out in turn and the models trained on the other seven.
 | | f1 | average precision |
 | --- | --- | --- |
 | best single Wazuh rule | 0.245 | 0.161 |
+| logistic on shape and severity only, **deployed** | 0.192 | 0.177 |
 | GRU over the alert sequence, in PyTorch | 0.180 | 0.199 |
 | logistic regression on counts and timing | **0.292** | **0.249** |
 | random | | 0.021 |
@@ -86,11 +88,25 @@ network was held out in turn and the models trained on the other seven.
 model is not justified for this problem: within a five minute window, which rules fired and how
 bursty they were carries the signal, and the order adds little on top.
 
-Two caveats kept in the open. None of the three is deployable, since the best operating point
-catches a fifth of intrusions and opening it up produces hundreds of false positives at a 2%
-base rate. And the public data contains none of rules 100100 to 100113, so this measures the
-method rather than this lab's own detections. [The full write-up](05-detection-modelling/README.md)
-covers both.
+The winner is also the one model that cannot be deployed here. Its columns are one per AIT rule
+id, and this lab shares two signatures out of thirty one, so pointed at live alerts it would put
+every one of them in the unknown column and return a confident number about nothing. The third
+row is the feature set that survives the move: eleven columns describing the shape and severity
+of a window with no rule identity in them. It keeps 71% of the full model and beats the best
+single rule, and the gap is the measured price of portability.
+
+That one runs live. The [lab dashboard](04-implementation/host/lab-dashboard/README.md) scores
+the last twelve five minute windows on every poll and prints the model's provenance and its
+measured average precision on the panel, permanently, because it has never been measured on this
+lab.
+
+Two caveats kept in the open. None of these is deployable as an alerting rule: on the best fold
+the winner holds perfect precision down to recall 0.375, and catching half the intrusions costs
+119 false positives. And the public data contains none of rules 100100 to 100113, so this
+measures the method rather than this lab's own detections.
+[The full write-up](05-detection-modelling/README.md) covers both, and
+[the report](docs/Detection-Modelling-Report.pdf) is the seven page version with every figure
+read off a measurement.
 
 ## Scope
 

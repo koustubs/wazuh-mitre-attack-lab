@@ -4,8 +4,9 @@
 **State:** Steps 1 to 4 complete. Lab is built and running. All six detection cases proven on
 live endpoints, alerts confirmed rendering in the dashboard, and the frequency rule edge cases
 characterised. A fifth step beyond the brief, detection modelling, has been measured and
-reported: a sequence model does not beat logistic regression on 2.6 million real alerts.
-Remaining work is packaging and presentation.
+reported: a sequence model does not beat logistic regression on 2.6 million real alerts. A
+portable version of the winning model now scores live alerts on the lab dashboard, and the
+whole of step 5 is written up as a PDF. Remaining work is packaging and presentation.
 
 This file records where the project started, everything that happened, where it stands now, and
 what someone picking it up needs to know. It is written so that a person who has never seen the
@@ -155,6 +156,7 @@ Each network held out in turn, trained on the other seven:
 | | f1 | average precision |
 | --- | --- | --- |
 | best single Wazuh rule | 0.245 (sd 0.134) | 0.161 (sd 0.092) |
+| logistic on shape and severity, deployed | 0.192 (sd 0.107) | 0.177 (sd 0.080) |
 | GRU over the alert sequence | 0.180 (sd 0.112) | 0.199 (sd 0.081) |
 | logistic regression on counts and timing | **0.292** (sd 0.121) | **0.249** (sd 0.097) |
 | random | | 0.021, the base rate |
@@ -162,11 +164,20 @@ Each network held out in turn, trained on the other seven:
 **Logistic regression wins all eight folds. The GRU wins none, mean margin -0.049.** A sequence
 model is not justified for this problem on this evidence.
 
-Three things that should be read with it:
+Four things that should be read with it:
 
-- **Nothing here is deployable.** Best operating point was precision 1.000 at recall 0.225.
-  Opened up for recall it produces 917 false positives on 2,442 windows. That is what a 2% base
-  rate does, and it is the honest state of the art here rather than a failure of the modelling.
+- **The winner cannot be deployed here, and the second row is what was.** The full feature set
+  is one column per AIT rule id, and this lab shares two signatures with AIT out of thirty one,
+  so on live lab alerts it would put everything in the unknown column. The deployed model drops
+  every rule count and keeps eleven columns describing the shape and severity of a window. It
+  holds 71% of the full model and still beats the best single rule. The 0.072 it gives up is the
+  measured price of portability, and that the price is that high says most of the signal was in
+  which rules fired rather than in the shape of the burst.
+- **Nothing here is deployable as an alerting rule.** On its best fold, wheeler, 1,166 windows
+  holding 16 attack windows, the winner keeps perfect precision down to recall 0.375: six caught
+  and nothing false. Pushed to catch half, precision falls to 0.063, so eight real attacks arrive
+  with 119 false positives. That is what a 2% base rate does, and it is the honest state of the
+  art here rather than a failure of the modelling.
 - **The synthetic results were measuring the generator.** On `make-synthetic.py` output every
   model scored near the ceiling, logistic at f1 1.000. The same model scores 0.249 average
   precision on real alerts. Synthetic numbers in this repo are evidence the code runs, nothing
@@ -176,6 +187,19 @@ Three things that should be read with it:
   from an administrator in sequence is still open, and `run-campaign.sh` is what would answer
   it. That is now a specific question rather than a blocker, and the pipeline it would feed is
   built and proven.
+
+The deployed model runs inside the dashboard's existing SSH poll, scoring the last twelve five
+minute windows on every cycle at 4 ms for a full 800 record sample, with nothing installed on
+the manager. `05-detection-modelling/export-model.py` writes the eight fold result into the
+model file itself, and the panel prints it, because a weights file with no measurement attached
+gets trusted more than it has earned. The panel also states permanently that the model has
+never been measured on this lab.
+
+All of step 5 is written up in [docs/Detection-Modelling-Report.pdf](docs/Detection-Modelling-Report.pdf),
+seven pages, rebuilt by `05-detection-modelling/report/Build-Report.ps1`. Every figure in it is
+read from a measurement artefact or produced by a run the build makes itself. Writing it caught
+a real error: the operating point above had been quoted with two figures from different splits
+in the same sentence.
 
 ---
 
@@ -299,6 +323,9 @@ wazuh-threat-detection/
     baseline.py                 one rule, the degenerate classifier, logistic regression
     train.py                    embedding, GRU and linear head, in PyTorch
     evaluate.py                 leave one network out, across all eight
+    export-model.py             fits the portable model, with its measurement inside the file
+    scorer/                     score.py and model.json, the part that leaves this machine
+    report/                     builds docs/Detection-Modelling-Report.pdf from the artefacts
     data/, models/              gitignored: rebuilt by the scripts above
 ```
 
@@ -355,6 +382,11 @@ wazuh-threat-detection/
   and `lab-scenario` installed, and a validated sudoers file on each. Its own closing check
   answers yes to agent state, indexer summary and the alert log.
 
+Alert sequence scoring went onto the dashboard on 21 September: the manager buckets its own
+recent alerts into five minute windows and scores each with the portable model, inside the
+SSH poll that was already happening. Verified offline against the substituted script, and in
+all three states the panel can be in. It has not yet been watched against a live scenario run.
+
 **Still open:**
 
 - A single command from bare ISOs. The remaining manual steps are the GRUB edit for Ubuntu
@@ -369,11 +401,15 @@ wazuh-threat-detection/
   a prerequisite for anything.
 - `run-campaign.sh` is not in the dashboard's sudoers grant, so starting a campaign from the
   dashboard would prompt for a password. Everything else the dashboard needs is granted.
+- **The scoring panel has not been watched live.** It is verified against fabricated alerts
+  end to end, which is not the same as seeing the score move while an S1 burst runs. That is
+  ten minutes with both VMs up and it is the screenshot worth having.
 
 **Housekeeping:**
 
 - The PDF for the mentor covers steps 1 to 3 and predates the build. If he wants the results, it
-  needs regenerating to include step 4.
+  needs regenerating to include step 4. `docs/Detection-Modelling-Report.pdf` covers step 5 and
+  is generated from the measurements, so that one stays current on its own.
 - `lab-dashboard/Enable-LabDashboard.ps1` replaces the staged sudo password chore. It grants a
   narrow, visudo-checked rule once and stores nothing.
 - `sshpass` was installed on the manager so it could act as a second endpoint for the cross-agent

@@ -11,6 +11,15 @@ model does not earn its place.** Plain logistic regression on rule counts and ti
 on eight held out networks out of eight. The detail is below, including the numbers that say
 so and the reasons not to read too much into them.
 
+A second answer sits under that one. The model that won cannot be deployed here at all, because
+its features name AIT rule ids and this lab has different rules. What is actually running on the
+dashboard is a portable version of it, fitted on eleven features that name no signature, and
+what that costs is measured rather than waved at. See
+[what is deployed](#what-is-deployed-and-why-it-is-not-the-winner).
+
+The seven page version of all of this, for a reader who is not going to clone the repository, is
+[docs/Detection-Modelling-Report.pdf](../docs/Detection-Modelling-Report.pdf).
+
 ## The order of work, and why
 
 1. **Get data.** Either `import-ait.py` for the public set, or
@@ -34,6 +43,9 @@ and something to compare against.
 | `baseline.py` | One rule, the degenerate classifier, and logistic regression |
 | `train.py` | An embedding, a GRU and a linear head, in PyTorch |
 | `evaluate.py` | Leave one network out, across all eight |
+| `export-model.py` | Fits the portable model and writes it out with its measurement attached |
+| `scorer/` | The part that leaves this machine: `score.py` and `model.json`, read by the dashboard |
+| `report/` | Builds [the report](../docs/Detection-Modelling-Report.pdf) from the artefacts |
 
 ## Running it
 
@@ -44,6 +56,7 @@ into `data/ait/`, then:
 python import-ait.py
 python baseline.py --data data/ait/episodes.jsonl --split source
 python evaluate.py --data data/ait/episodes.jsonl
+python export-model.py
 ```
 
 The import parses 2.8 GB out of the archive once and caches what it needs, so re-running at a
@@ -94,6 +107,7 @@ Leave one network out, eight folds, three seeds per fold for the GRU:
 | | f1 | average precision |
 | --- | --- | --- |
 | best single rule | 0.245 (sd 0.134) | 0.161 (sd 0.092) |
+| logistic on shape and severity, the deployed one | 0.192 (sd 0.107) | 0.177 (sd 0.080) |
 | GRU over the sequence | 0.180 (sd 0.112) | 0.199 (sd 0.081) |
 | logistic on counts and timing | **0.292** (sd 0.121) | **0.249** (sd 0.097) |
 | random | | 0.021, the base rate |
@@ -124,6 +138,46 @@ The result is stable in the ways that were checked. Window width barely moves it
 average precision is 0.296, 0.303 and 0.289 at 120, 300 and 600 second windows. A time split
 rather than a network split gives 0.273, the same picture.
 
+## What is deployed, and why it is not the winner
+
+The model that wins every fold cannot be run on this lab. Its feature vector is one column per
+AIT rule id, and this lab and AIT share two signatures out of thirty one. Pointed at live lab
+alerts, every one of them lands in the unknown column and the model returns a confident number
+about nothing. Deploying it and calling it a detection would be the most dishonest thing in this
+repository.
+
+`shape_only()` in `features.py` is the feature set that survives the move. Eleven columns: how
+many alerts arrived, over how long, how close together, how tightly the busiest minute was
+packed, how many distinct signatures were involved, and how severe they were. No rule id appears
+in it. Severity earns its place by being a property of the Wazuh ruleset rather than of one
+capture, so it transfers where a rule id does not, and on three folds it roughly doubled average
+precision on its own.
+
+It keeps 71% of the full model, beats the best single rule, and beats the base rate on all eight
+folds. The 0.072 average precision it gives up is the measured price of portability, and the
+reason it is that large is itself a finding: most of the signal was in *which* rules fired, not
+in the shape of the burst. That is an argument for the rule based approach this lab already has.
+
+`export-model.py` fits it on seven networks, picks its cutoff on the eighth, and writes
+`scorer/model.json` with the eight fold result inside the file. A weights file carrying no
+measurement gets trusted more than it has earned. The export refuses to write if `scorer/score.py`
+and `features.py` disagree about what the features are, because that failure looks exactly like a
+working dashboard.
+
+The [lab dashboard](../04-implementation/host/lab-dashboard/README.md) scores the last twelve
+windows on every poll, inside the SSH round trip it was already making. 4 ms for the manager's
+full 800 record sample, in plain Python, with nothing installed on the manager. The panel prints
+the model's provenance and its measured average precision underneath itself and says that it has
+never been measured on this lab, which is what a campaign would fix.
+
+## The report
+
+[docs/Detection-Modelling-Report.pdf](../docs/Detection-Modelling-Report.pdf), seven pages,
+rebuilt with `report/Build-Report.ps1`. Every figure in it is read from `data/ait/folds.jsonl`,
+`scorer/model.json` or a run the build makes itself, and a missing artefact stops the build rather
+than printing a zero. This README drifted from its own numbers once inside a week, which is why
+the document that leaves the repository is generated rather than written.
+
 ## Not done yet
 
 - **The lab's own rules are still untested in sequence.** Nothing public contains them. That
@@ -136,3 +190,6 @@ rather than a network split gives 0.273, the same picture.
   beat counting on this data, not that no sequence model ever could.
 - **Windows scenarios.** Rules 100100 to 100103 are in the lab vocabulary and unreachable from
   a Linux campaign.
+- **The deployed model has never been measured here.** Its 0.177 is what it scored on networks
+  it had not seen. This lab is a ninth such network, so that is the honest expectation for it
+  and not a result from it. The panel says so and will keep saying so until a campaign runs.
