@@ -103,6 +103,35 @@ def _times_and_rules(ep):
     return [a["at"] for a in alerts], [a["ruleId"] for a in alerts]
 
 
+def _timing_row(times):
+    """The six timing features, in the order tabular_columns names them.
+
+    Shared by tabular() and shape_only() so the two cannot drift apart. A model exported from
+    one and fed by the other would be wrong in a way no test here would notice.
+
+    busiest_60s is the timing signal the episode grammar actually builds in: an attacker moves
+    between steps in seconds where an administrator takes minutes.
+
+    A sliding window rather than the obvious pair of nested loops. times is sorted, so the
+    right hand edge only ever moves forward and the whole thing is one pass. The nested
+    version was quadratic in the alerts per episode, which nobody noticed at nine alerts a run
+    and which dominated the runtime at two hundred and fifty.
+    """
+    gaps = np.diff(times) if len(times) > 1 else np.array([0.0])
+    busiest = 0
+    right = 0
+    for left, t in enumerate(times):
+        while right < len(times) and times[right] < t + 60.0:
+            right += 1
+        busiest = max(busiest, right - left)
+    return [
+        float(len(times)),
+        float(times[-1] - times[0]) if len(times) > 1 else 0.0,
+        float(gaps.min()), float(np.median(gaps)), float(gaps.max()),
+        float(busiest),
+    ]
+
+
 def tabular(episodes, vocab=LAB_VOCAB):
     """Counts per rule plus the shape of the timing. What a non-neural model gets to see."""
     cols = tabular_columns(vocab)
@@ -115,27 +144,59 @@ def tabular(episodes, vocab=LAB_VOCAB):
         for r in vocab.rule_ids:
             row.append(float(rules.count(r)))
         row.append(float(sum(1 for r in rules if r not in known)))
-        gaps = np.diff(times) if len(times) > 1 else np.array([0.0])
-        # busiest_60s is the timing signal the episode grammar actually builds in: an attacker
-        # moves between steps in seconds where an administrator takes minutes.
-        #
-        # A sliding window rather than the obvious pair of nested loops. times is sorted, so
-        # the right hand edge only ever moves forward and the whole thing is one pass. The
-        # nested version was quadratic in the alerts per episode, which nobody noticed at nine
-        # alerts a run and which dominated the runtime at two hundred and fifty.
-        busiest = 0
-        right = 0
-        for left, t in enumerate(times):
-            while right < len(times) and times[right] < t + 60.0:
-                right += 1
-            busiest = max(busiest, right - left)
-        row += [
-            float(len(times)),
-            float(times[-1] - times[0]) if len(times) > 1 else 0.0,
-            float(gaps.min()), float(np.median(gaps)), float(gaps.max()),
-            float(busiest),
-        ]
+        row += _timing_row(times)
         X[i] = row
+        y[i] = LABEL_TO_IX[ep["label"]]
+    return X, y
+
+
+# The features that do not name a signature, and therefore mean the same thing on a network
+# whose rule set nobody here has seen. Severity is in here and rule identity is not, which is
+# the whole distinction: level 10 means the same thing in every Wazuh install, and rule 52507
+# means nothing outside the capture it came from.
+SHAPE_COLUMNS = ["n_alerts", "duration_s", "min_gap_s", "median_gap_s", "max_gap_s",
+                 "busiest_60s", "n_distinct_rules", "max_level", "mean_level",
+                 "n_level_ge_7", "n_level_ge_10"]
+
+
+def shape_only(episodes):
+    """The shape and severity of a burst, with every per-rule count removed.
+
+    tabular() is the stronger feature set and it is the one to quote, but it cannot leave the
+    dataset it was fitted on. Its columns are one per rule id, and the AIT rule ids and this
+    lab's rule ids have two values in common out of thirty one. Scoring lab alerts with a
+    model fitted on AIT counts would put every alert in the unknown column and return a number
+    that looks like a probability and means nothing. This is the feature set that survives the
+    move, and it is what gets exported and deployed.
+
+    Eleven columns: how many alerts arrived, over how long, how close together, how tightly
+    the busiest minute was packed, how many distinct signatures were involved, and how severe
+    they were. Severity earns its place by being a property of the Wazuh ruleset rather than
+    of any one capture, so it transfers where a rule id does not, and measured over three
+    folds it roughly doubled average precision on its own.
+
+    What the whole set costs against tabular() is measurable, and evaluate.py measures it. The
+    gap between the two is the price of portability and it is not small.
+
+    No vocabulary argument, deliberately. There is nothing here for a vocabulary to index, and
+    accepting one would imply otherwise.
+    """
+    X = np.zeros((len(episodes), len(SHAPE_COLUMNS)), dtype=np.float64)
+    y = np.zeros(len(episodes), dtype=np.int64)
+    for i, ep in enumerate(episodes):
+        times, rules = _times_and_rules(ep)
+        # Missing level reads as 0, which is below every real Wazuh level and so cannot be
+        # mistaken for a quiet alert. An episode file written before levels were carried will
+        # score as though nothing was severe rather than failing here.
+        levels = [float(a.get("level", 0) or 0)
+                  for a in sorted(ep["alerts"], key=lambda a: a["at"])]
+        X[i] = _timing_row(times) + [
+            float(len(set(rules))),
+            max(levels) if levels else 0.0,
+            float(np.mean(levels)) if levels else 0.0,
+            float(sum(1 for v in levels if v >= 7)),
+            float(sum(1 for v in levels if v >= 10)),
+        ]
         y[i] = LABEL_TO_IX[ep["label"]]
     return X, y
 
@@ -185,38 +246,6 @@ def scores(y_true, y_pred, positive=1):
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     return {"accuracy": (tp + tn) / max(len(y_true), 1), "precision": precision,
             "recall": recall, "f1": f1, "tp": tp, "fp": fp, "fn": fn, "tn": tn}
-
-
-def average_precision(y_true, score, positive=1):
-    """Area under the precision-recall curve, by the step-wise definition.
-
-    The metric to lead with when positives are rare. f1 at a fixed 0.5 cut answers "how good
-    is this model at this one threshold", which at a 2% base rate says more about the
-    threshold than the model. Average precision answers "how well does it rank", which is what
-    an analyst working a queue actually depends on, and it cannot be gamed by moving the cut.
-
-    The floor is the base rate: a model that ranks at random scores the positive fraction.
-    """
-    y = np.asarray(y_true) == positive
-    s = np.asarray(score, dtype=np.float64)
-    if y.sum() == 0:
-        return 0.0
-    order = np.argsort(-s, kind="stable")
-    y = y[order]
-    tp = np.cumsum(y)
-    precision = tp / np.arange(1, len(y) + 1)
-    return float((precision * y).sum() / y.sum())
-
-
-def pick_threshold(y_true, score, positive=1):
-    """The cut that maximises f1, chosen on data the test set had no part in."""
-    s = np.asarray(score, dtype=np.float64)
-    best_t, best_f1 = 0.5, -1.0
-    for t in np.unique(np.round(s, 4)):
-        f1 = scores(y_true, (s >= t).astype(np.int64), positive)["f1"]
-        if f1 > best_f1:
-            best_t, best_f1 = float(t), f1
-    return best_t, best_f1
 
 
 def average_precision(y_true, score, positive=1):

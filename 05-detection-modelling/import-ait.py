@@ -145,8 +145,14 @@ def extract(zip_path, cache_dir, scenarios):
     return names
 
 
-def windows(times, rules, phases, scenario, width, max_alerts):
-    """Tumbling windows of `width` seconds, labelled by overlap with a ground truth phase."""
+def windows(times, rules, phases, scenario, width, max_alerts, levels):
+    """Tumbling windows of `width` seconds, labelled by overlap with a ground truth phase.
+
+    `levels` is that scenario's own rule id to severity map, so the level travels on the
+    alert the way it does in a live `alerts.json`. Taking it from the scenario rather than
+    from the combined vocabulary keeps a held out network from contributing anything at all,
+    and it is the only reason the level is passed in rather than looked up globally.
+    """
     if len(times) == 0:
         return []
     # Anchored on the first alert rather than the epoch, so a boundary means something
@@ -174,7 +180,8 @@ def windows(times, rules, phases, scenario, width, max_alerts):
             "label": "attack" if hit else "benign",
             "source": scenario,
             "startedAt": round(lo, 3),
-            "alerts": [{"at": round(float(t) - lo, 3), "ruleId": int(r)}
+            "alerts": [{"at": round(float(t) - lo, 3), "ruleId": int(r),
+                        "level": int(levels.get(int(r), 0))}
                        for t, r in zip(chunk_t, chunk_r)],
         })
         idx += 1
@@ -211,7 +218,10 @@ def main():
     episodes = []
     for s in a.scenarios:
         d = np.load(pathlib.Path(a.cache) / ("%s.npz" % s))
-        eps = windows(d["times"], d["rules"], phases.get(s, []), s, a.window, a.max_alerts)
+        meta = json.loads((pathlib.Path(a.cache) / ("%s.names.json" % s)).read_text())
+        levels = {int(k): int(v[1]) for k, v in meta.items()}
+        eps = windows(d["times"], d["rules"], phases.get(s, []), s, a.window, a.max_alerts,
+                      levels)
         episodes.extend(eps)
         atk = sum(1 for e in eps if e["label"] == "attack")
         print("  %-16s %6d episodes, %4d attack (%4.1f%%)"

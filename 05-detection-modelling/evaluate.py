@@ -29,13 +29,24 @@ import torch.nn as nn
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from alert_stream import read_episodes
 from baseline import best_single_rule, fit_logistic, rule_only, score_logistic
-from features import (average_precision, build_vocab, pick_threshold, scores, sources_of,
-                      standardise, tabular)
+from features import (average_precision, build_vocab, pick_threshold, scores, shape_only,
+                      sources_of, standardise, tabular)
 from train import AlertGRU, to_tensors
 
 
-def fold(episodes, held, args):
-    """One fold: everything except `held` trains, `held` is the test set."""
+# Every column a finished fold is expected to carry. A cached row missing one of these is
+# recomputed for that model alone, which is what makes adding a column cost two minutes rather
+# than re-running fifty minutes of GRU that was already measured.
+COLUMNS = ("rule_f1", "rule_ap", "log_f1", "log_ap", "shape_f1", "shape_ap", "gru_f1", "gru_ap")
+
+
+def fold(episodes, held, args, have=None):
+    """One fold: everything except `held` trains, `held` is the test set.
+
+    `have` is a previously saved row for this network. Anything already in it is kept and not
+    recomputed, so the expensive model is not refitted to fill in a cheap column.
+    """
+    have = dict(have or {})
     train = [e for e in episodes if e["source"] != held]
     test = [e for e in episodes if e["source"] == held]
     train.sort(key=lambda e: (e["source"], e["startedAt"]))
@@ -49,19 +60,38 @@ def fold(episodes, held, args):
     # The validation slice is the tail of training, which under this grouping is a whole
     # network held back. Thresholds and early stopping are chosen there and nowhere else.
     cut = int(len(train) * 0.85)
-    out = {"held": held, "n": len(test), "attack": int(yte.sum()),
-           "base": float(yte.mean())}
+    out = dict(have)
+    out.update({"held": held, "n": len(test), "attack": int(yte.sum()),
+                "base": float(yte.mean())})
 
-    rule, _ = best_single_rule(train, ytr, vocab)
-    out["rule"] = rule
-    out["rule_f1"] = scores(yte, rule_only(test, rule))["f1"]
-    out["rule_ap"] = average_precision(yte, rule_only(test, rule))
+    if "rule_ap" not in out:
+        rule, _ = best_single_rule(train, ytr, vocab)
+        out["rule"] = rule
+        out["rule_f1"] = scores(yte, rule_only(test, rule))["f1"]
+        out["rule_ap"] = average_precision(yte, rule_only(test, rule))
 
-    w, b = fit_logistic(Xtr_s[:cut], ytr[:cut])
-    thr, _ = pick_threshold(ytr[cut:], score_logistic(Xtr_s[cut:], w, b))
-    ste = score_logistic(Xte_s, w, b)
-    out["log_f1"] = scores(yte, (ste >= thr).astype(np.int64))["f1"]
-    out["log_ap"] = average_precision(yte, ste)
+    if "log_ap" not in out:
+        w, b = fit_logistic(Xtr_s[:cut], ytr[:cut])
+        thr, _ = pick_threshold(ytr[cut:], score_logistic(Xtr_s[cut:], w, b))
+        ste = score_logistic(Xte_s, w, b)
+        out["log_f1"] = scores(yte, (ste >= thr).astype(np.int64))["f1"]
+        out["log_ap"] = average_precision(yte, ste)
+
+    # The portable feature set, fitted and thresholded exactly as the full one is, so the gap
+    # between the two rows is the feature set and nothing else. This is the model that gets
+    # exported, because it is the only one whose columns still mean something on this lab.
+    if "shape_ap" not in out:
+        Str, _ = shape_only(train)
+        Ste, _ = shape_only(test)
+        Str_s, Ste_s = standardise(Str, Ste)
+        w, b = fit_logistic(Str_s[:cut], ytr[:cut])
+        thr, _ = pick_threshold(ytr[cut:], score_logistic(Str_s[cut:], w, b))
+        sh = score_logistic(Ste_s, w, b)
+        out["shape_f1"] = scores(yte, (sh >= thr).astype(np.int64))["f1"]
+        out["shape_ap"] = average_precision(yte, sh)
+
+    if "gru_ap" in out:
+        return out
 
     tr = to_tensors(train[:cut], args.max_len, vocab)
     va = to_tensors(train[cut:], args.max_len, vocab)
@@ -146,35 +176,47 @@ def main():
     res.parent.mkdir(parents=True, exist_ok=True)
     if a.fresh and res.exists():
         res.unlink()
-    rows = [r for r in (read_episodes(res) if res.exists() else []) if "held" in r]
-    done = {r["held"] for r in rows}
+    saved = {}
+    for r in (read_episodes(res) if res.exists() else []):
+        if "held" in r:
+            saved[r["held"]] = r
+    done = {h for h, r in saved.items() if all(k in r for k in COLUMNS)}
+    partial = sorted(set(saved) - done)
+    rows = []
 
     print("%s   %d episodes across %d networks" % (a.data, len(episodes), len(names)))
     print("Each row trains on the other %d and tests on the one named." % (len(names) - 1))
     if done:
-        print("Resuming: %d fold(s) already in %s" % (len(done), res))
+        print("Resuming: %d fold(s) already complete in %s" % (len(done), res))
+    if partial:
+        print("Filling in missing columns for: %s" % ", ".join(partial))
     print()
-    print("  %-16s %5s %5s  | %-6s %6s %6s  | %6s %6s  | %6s %6s"
+    print("  %-16s %5s %5s  | %-6s %6s %6s  | %6s %6s  | %6s %6s  | %6s %6s"
           % ("held out", "eps", "atk", "rule", "f1", "AP", "log f1", "log AP",
-             "GRU f1", "GRU AP"))
+             "shp f1", "shp AP", "GRU f1", "GRU AP"))
 
     for held in names:
-        if held in done:
-            r = next(x for x in rows if x["held"] == held)
-        else:
-            r = fold(episodes, held, a)
-            with open(res, "a", encoding="utf-8", newline="\n") as fh:
-                fh.write(json.dumps(r, sort_keys=True) + "\n")
-            rows.append(r)
-        print("  %-16s %5d %5d  | %-6d %6.3f %6.3f  | %6.3f %6.3f  | %6.3f %6.3f"
+        r = saved.get(held)
+        if held not in done:
+            r = fold(episodes, held, a, saved.get(held))
+            saved[held] = r
+            # Rewritten rather than appended, because a row can now be completed in place and
+            # appending would leave two rows for one network carrying different columns.
+            with open(res, "w", encoding="utf-8", newline="\n") as fh:
+                for h in sorted(saved):
+                    fh.write(json.dumps(saved[h], sort_keys=True) + "\n")
+        rows.append(r)
+        print("  %-16s %5d %5d  | %-6d %6.3f %6.3f  | %6.3f %6.3f  | %6.3f %6.3f  | %6.3f %6.3f"
               % (r["held"], r["n"], r["attack"], r["rule"], r["rule_f1"], r["rule_ap"],
-                 r["log_f1"], r["log_ap"], r["gru_f1"], r["gru_ap"]))
+                 r["log_f1"], r["log_ap"], r["shape_f1"], r["shape_ap"],
+                 r["gru_f1"], r["gru_ap"]))
         sys.stdout.flush()
 
     rows = [r for r in rows if r["held"] in set(names)]
     print()
     print("Across %d folds (mean, sd):" % len(rows))
-    for key, label in (("rule", "one rule"), ("log", "logistic"), ("gru", "GRU")):
+    for key, label in (("rule", "one rule"), ("log", "logistic"),
+                       ("shape", "portable"), ("gru", "GRU")):
         f1 = np.array([r["%s_f1" % key] for r in rows])
         ap = np.array([r["%s_ap" % key] for r in rows])
         print("  %-12s f1 %.3f (sd %.3f)   average precision %.3f (sd %.3f)"
@@ -193,6 +235,14 @@ def main():
              int(((rap > lap) & (rap > gap)).sum()), len(rows)))
     print("GRU beats logistic on %d of %d folds (mean margin %+.3f AP)"
           % (int((gap > lap).sum()), len(rows), float((gap - lap).mean())))
+
+    # What dropping the rule counts costs. This is the number that decides whether anything
+    # can be put in front of live lab alerts at all, because the full feature set cannot be.
+    sap = np.array([r["shape_ap"] for r in rows])
+    print("Portable set keeps %.0f%% of the full model's AP (%.3f against %.3f) and beats the "
+          "base rate on %d of %d folds"
+          % (100.0 * sap.mean() / max(lap.mean(), 1e-9), sap.mean(), lap.mean(),
+             int((sap > base).sum()), len(rows)))
 
 
 if __name__ == "__main__":

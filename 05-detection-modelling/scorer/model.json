@@ -1,0 +1,102 @@
+{
+ "bias": -0.27665618,
+ "caveat": "Fitted on eight public networks and never measured on this lab, whose own rules appear in no public dataset. Treat the score as triage ordering, not as a detection. A campaign is what would replace this sentence with a number.",
+ "columns": [
+  "n_alerts",
+  "duration_s",
+  "min_gap_s",
+  "median_gap_s",
+  "max_gap_s",
+  "busiest_60s",
+  "n_distinct_rules",
+  "max_level",
+  "mean_level",
+  "n_level_ge_7",
+  "n_level_ge_10"
+ ],
+ "generated": "2026-09-21",
+ "generatedBy": "05-detection-modelling/export-model.py",
+ "mean": [
+  84.13444168,
+  203.79217659,
+  0.98743291,
+  1.24942486,
+  52.82920291,
+  43.63489986,
+  3.29480298,
+  7.08574421,
+  3.759708,
+  1.18811363,
+  1.1347035
+ ],
+ "measured": {
+  "averagePrecision": 0.1771,
+  "averagePrecisionSd": 0.0805,
+  "baseRate": 0.0211,
+  "beatenBy": {
+   "GRU over the sequence": 0.1993,
+   "full feature set, which cannot be deployed here": 0.2486
+  },
+  "beats": {
+   "best single rule": 0.1608
+  },
+  "foldsAboveBaseRate": 8,
+  "protocol": "leave one network out, 8 folds"
+ },
+ "model": "logistic regression, portable feature set",
+ "sd": [
+  74.9022935,
+  101.41588637,
+  15.24937273,
+  15.55840788,
+  46.83174545,
+  49.78920185,
+  1.81288979,
+  3.2786711,
+  0.64023679,
+  1.66168092,
+  1.60198488
+ ],
+ "threshold": 0.852048,
+ "thresholdChosenOn": {
+  "attackEpisodes": 24,
+  "episodes": 1276,
+  "f1": 0.3125,
+  "networks": [
+   "wilson"
+  ],
+  "precision": 0.625,
+  "recall": 0.2083
+ },
+ "trainedOn": {
+  "attackEpisodes": 163,
+  "baseRate": 0.0213,
+  "dataset": "AIT Alert Data Set",
+  "episodes": 7639,
+  "licence": "CC-BY-4.0",
+  "networks": [
+   "fox",
+   "harrison",
+   "russellmitchell",
+   "santos",
+   "shaw",
+   "wardbeck",
+   "wheeler"
+  ],
+  "source": "https://zenodo.org/records/8263181"
+ },
+ "weights": [
+  -1.06289605,
+  0.09880818,
+  0.43721427,
+  -0.41275725,
+  -0.02527208,
+  1.03326804,
+  0.47692431,
+  -0.10212543,
+  -0.66778907,
+  0.69386626,
+  -0.38791461
+ ],
+ "windowSeconds": 300.0
+}
