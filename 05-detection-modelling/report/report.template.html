@@ -1,0 +1,346 @@
+<!doctype html>
+<!--
+  The report body. build-report.py fills every %%(name)s from a measurement and writes
+  report.html beside this file; Build-Report.ps1 prints that to PDF with Edge.
+
+  Nothing numeric belongs in here. If a figure is written into this template by hand it will
+  be wrong within a week and nothing will catch it, which is the failure this arrangement is
+  designed around. Every literal percent sign has to be doubled, because this file is a
+  Python format string before it is a page.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Detection modelling: what a model adds to the Wazuh lab, and what it does not</title>
+<style>
+  @page { size: A4; margin: 17mm 16mm 16mm; }
+  :root {
+    --ink: #17171a; --soft: #55555e; --faint: #85858e;
+    --line: #d9d9d4; --rule: #24242a; --accent: #0f6e56; --danger: #9d2b2b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font: 10.5pt/1.55 "Charter", "Georgia", "Cambria", serif;
+    color: var(--ink); margin: 0 auto; max-width: 178mm; padding: 0;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  h1 { font-size: 19pt; line-height: 1.22; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 12.5pt; margin: 26px 0 9px; padding-bottom: 5px;
+       border-bottom: 1.5px solid var(--rule); letter-spacing: -0.005em; }
+  h3 { font-size: 10.5pt; margin: 17px 0 5px; }
+  p { margin: 0 0 9px; }
+  ul { margin: 0 0 9px; padding-left: 18px; }
+  li { margin-bottom: 4px; }
+  a { color: var(--accent); text-decoration: none; }
+  .sub { color: var(--soft); font-size: 10pt; margin: 0 0 3px; }
+  .meta { color: var(--faint); font-size: 8.5pt; margin: 0 0 20px;
+          padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .lead { font-size: 11pt; }
+
+  .finding { border-left: 3px solid var(--rule); padding: 2px 0 2px 13px; margin: 14px 0 18px; }
+  .finding p:last-child { margin-bottom: 0; }
+  .aside { background: #f5f5f1; border: 1px solid var(--line); border-radius: 4px;
+           padding: 10px 13px; margin: 13px 0; font-size: 9.5pt; }
+  .aside p:last-child { margin-bottom: 0; }
+  .aside b { font-weight: 650; }
+
+  table { border-collapse: collapse; width: 100%%; margin: 10px 0 14px; font-size: 9.5pt; }
+  th { text-align: left; font-weight: 650; font-size: 8pt; text-transform: uppercase;
+       letter-spacing: .05em; color: var(--soft); border-bottom: 1.2px solid var(--rule);
+       padding: 0 8px 4px 0; }
+  td { padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.n, th.n { text-align: right; padding-right: 0; font-variant-numeric: tabular-nums;
+               white-space: nowrap; }
+  th:last-child, td:last-child { padding-right: 0; text-align: right; }
+  tr.win td { background: #eef6f2; }
+  .mono { font-family: "Consolas", "SF Mono", monospace; font-size: 9pt; }
+  code { font-family: "Consolas", "SF Mono", monospace; font-size: 9pt; background: #f2f2ee;
+         padding: 0 3px; border-radius: 3px; }
+
+  .pair { display: flex; gap: 26px; }
+  .pair > div { flex: 1 1 0; min-width: 0; }
+
+  h2, h3 { break-after: avoid; page-break-after: avoid; }
+  table, .aside, .finding { break-inside: avoid; page-break-inside: avoid; }
+  .newpage { break-before: page; page-break-before: always; }
+  footer { margin-top: 26px; padding-top: 10px; border-top: 1px solid var(--line);
+           color: var(--faint); font-size: 8.5pt; }
+</style>
+</head>
+<body>
+
+<h1>Detection modelling</h1>
+<p class="sub">What a sequence model adds to the Wazuh lab, measured on 2.6 million real alerts,
+and what it does not add</p>
+<p class="meta">Step 5 of the Wazuh and MITRE ATT&amp;CK lab &middot; %(generated)s &middot;
+Prepared by Koustub</p>
+
+<p class="lead">Step 4 of this lab detects single events. Rule 100110 counts one failed SSH
+password; rule 100112 notices an account being created. Neither knows the other exists, and
+neither knows what an ordinary Tuesday looks like on the endpoint. This step is the attempt to
+add the thing they cannot do, which is to read a run of alerts and judge it.</p>
+
+<div class="finding">
+<p><strong>The result is that a sequence model does not earn its place here.</strong> Measured on
+%(alerts_total)s real alerts from eight independent networks, plain logistic regression on rule
+counts and timing beats a GRU over the alert sequence on %(wins_log)s held out networks out of
+%(n_folds)s. The GRU wins none of them, trailing by a mean of %(portable_gap_gru)s average
+precision. On this evidence PyTorch is not justified for this problem.</p>
+<p>The model that is deployed on the lab dashboard is therefore a logistic regression over eleven
+features, and it is deployed with its measurement attached rather than as a detection.</p>
+</div>
+
+<h2>1. Why a model was tried at all</h2>
+
+<p>The rules in step 4 are good at what they do and structurally blind to sequence. A brute force
+attempt followed four minutes later by a new account and a cron entry is three separate alerts to
+a Wazuh manager, and an analyst reading a queue has to assemble that story by hand. The question
+worth asking is whether something that reads the window rather than the event can order that queue
+better than the rules already do.</p>
+
+<p>That question has a clear failure condition, and stating it first is the point. A model that
+cannot beat the single best rule is not adding anything, and it is easy to build one that looks
+impressive and is not. The comparison below is arranged so that a bad result is visible rather
+than avoidable.</p>
+
+<h2>2. The dataset</h2>
+
+<p>Collecting a labelled dataset from this lab means a 14 hour campaign, and public data was
+checked first. Kaggle and Hugging Face were both searched and neither has anything usable for
+this problem: what is there is network flow tables, which are the wrong telemetry, or small
+instruction tuning sets, or synthetic data under a licence that forbids redistribution. There is
+one public dataset of real Wazuh alerts with ground truth labels.</p>
+
+<p>The <strong>AIT Alert Data Set</strong> (Zenodo record 8263181, CC-BY-4.0, published with the
+CSET 2024 paper) is alerts from eight simulated enterprise networks, each carrying a labelled
+multi-step intrusion. The alerts are in native <code>alerts.json</code> form, which is the same
+record this lab's own manager writes. The import read %(alerts_total)s alert records out of the
+archive.</p>
+
+<div class="aside">
+<p><b>What this dataset cannot answer, stated plainly.</b> It is not a test of this lab's rules.
+None of rules 100100 to 100113 have a parent signature anywhere in it: no sshd brute force in any
+of the eight scenarios, no local account creation, no file integrity monitoring. Rules 5501 and
+5502 are the entire overlap, and what AIT calls password cracking is offline hash cracking and
+WPScan rather than SSH. So everything below measures the <b>method</b>. Only a campaign on this
+lab measures the lab, and that is section 9.</p>
+</div>
+
+<table>
+<thead><tr><th>Network</th><th class=n>Alerts read</th><th class=n>Episodes</th>
+<th class=n>Attack</th><th class=n>Rate</th></tr></thead>
+<tbody>%(source_rows)s</tbody>
+</table>
+
+<p>Windowed into %(window)s second tumbling episodes, that is <strong>%(episodes)s episodes,
+%(attack)s of them attack</strong>, a base rate of %(base_pct)s&thinsp;%%, across
+%(signatures)s distinct signatures. Median %(median)s alerts per episode, 90th percentile
+%(p90)s, capped at %(maxlen)s.</p>
+
+<h3>How an episode is built</h3>
+<p>An episode is a fixed %(window)s second window of alerts, labelled attack if it overlaps a
+ground truth attack phase from the dataset's own <code>labels.csv</code>. Tumbling rather than
+sliding, so no alert is counted twice and no two episodes share evidence. The tail of an
+over-long window is kept rather than the head, because persistence lands at the end of a window.
+The choice of width was checked rather than assumed: logistic average precision is 0.296, 0.303
+and 0.289 at 120, 300 and 600 second windows, so the conclusions here are not an artefact of
+where the boundaries fall.</p>
+
+<h2 class="newpage">3. The training process</h2>
+
+<p>Four decisions do more work than the model choice, and all four are arranged to make a
+flattering result harder to obtain.</p>
+
+<h3>Whole networks are held out, never a random sample</h3>
+<p>Episodes from one capture are a time series. Shuffling before splitting lets the model see the
+future: the test set would sit between training examples drawn minutes either side of it, and the
+score would improve for a reason that has nothing to do with detection. Each AIT scenario is a
+separate network, so whole networks are held out instead. A model that scores well on a network it
+has never seen has generalised. A model that scores well on the last hour of a network it trained
+on may only have learned that network's noise floor.</p>
+
+<h3>Eight folds, not one split</h3>
+<p>On a single split the logistic model and the GRU finished 0.046 apart with forty attack
+episodes between them, which is well inside what a different pair of held out networks would move.
+Every result below is leave one network out across all %(n_folds)s networks: train on seven, test
+on the eighth, repeat. Counting how many folds each model wins is the claim that survives.</p>
+
+<h3>Average precision, not f1 at a fixed cutoff</h3>
+<p>At a %(base_pct)s&thinsp;%% base rate, f1 at 0.5 says more about where a model happens to put
+its threshold than about whether it ranks attacks above background. The same logistic predictions
+score f1 0.049 at 0.5 and 0.367 at a threshold chosen on validation. Average precision is the area
+under the precision-recall curve and cannot be flattered that way. Its floor is the base rate: a
+model ranking at random scores %(base_ap)s here.</p>
+
+<h3>Nothing is chosen on the test set</h3>
+<p>The vocabulary of known signatures is built from training sources only, so a signature that
+appears solely in the held out network falls through to an unknown index, which is the correct
+thing for it to do. Thresholds and early stopping are chosen on a validation slice held back from
+training. The GRU is run with three seeds per fold and the mean reported, because a single seed on
+%(attack)s positives is noise.</p>
+
+<h2>4. Every model tried, and what it scored</h2>
+
+<p>Leave one network out, %(n_folds)s folds, mean and standard deviation across them.</p>
+
+<table>
+<thead><tr><th>Model</th><th class=n>f1</th><th class=n>sd</th>
+<th class=n>Average precision</th><th class=n>sd</th></tr></thead>
+<tbody>
+%(row_rule)s
+%(row_portable)s
+%(row_gru)s
+%(row_log)s
+<tr><td>Random, for reference</td><td class=n>&mdash;</td><td class=n>&mdash;</td>
+<td class=n>%(base_ap)s</td><td class=n>&mdash;</td></tr>
+</tbody>
+</table>
+
+<p>A fifth model, the degenerate classifier that calls everything an attack, is not in the table
+because it exists only to show what recall alone is worth. It catches every intrusion and is
+useless.</p>
+
+<h3>Average precision per fold</h3>
+<table>
+<thead><tr><th>Held out</th><th class=n>Episodes</th><th class=n>Attack</th>
+<th class=n>Best rule</th><th class=n>GRU</th><th class=n>Portable</th>
+<th class=n>Logistic</th></tr></thead>
+<tbody>%(folds_rows)s</tbody>
+</table>
+
+<h2>5. Which model won, and what that means</h2>
+
+<p><strong>Logistic regression on rule counts and timing wins all %(wins_log)s folds.</strong> The
+GRU beats it on none of them. That is the finding, and three things follow from it that are not
+all negative.</p>
+
+<p><strong>All of them find real signal.</strong> %(log_ap)s against a %(base_ap)s base rate is
+roughly twelve times better than chance, and the single best rule at %(rule_ap)s is not far
+behind. The signal is there. The argument is only about what is needed to extract it.</p>
+
+<p><strong>The sequence model is not obviously wrong, it is just not worth it.</strong> The GRU
+reaches %(gru_ap)s, above the best single rule, so ordering by sequence does carry information. It
+costs 5,458 parameters, a PyTorch dependency and a training loop to land below twenty numbers
+fitted by gradient descent in a fifth of a second. A fair reading is that a small recurrent model
+does not beat counting on this data, not that no sequence model ever could: this one had no
+class-balanced sampling, no per-fold threshold tuning during training and no attention over the
+window.</p>
+
+<p><strong>None of them is deployable as an alerting rule.</strong> Take the winning model on its
+best fold, %(op_held)s, which is %(op_n)s windows containing %(op_attack)s attack windows. Ranked
+by score, it holds perfect precision down to recall %(op_perfect_rec)s: %(op_perfect_tp)s attacks
+caught and nothing false. Push it to catch half of them, recall %(op_half_rec)s, and precision is
+%(op_half_prec)s, which is %(op_half_tp)s real attacks arriving with %(op_half_fp)s false
+positives beside them. That is what triage looks like at a two percent base rate, and it is the
+honest correction to section 7.</p>
+
+<h2 class="newpage">6. What was deployed, and why it is not the winner</h2>
+
+<p>The model that won every fold cannot be run on this lab, and that is worth being precise
+about. Its feature vector is one column per AIT rule id. This lab and AIT share two signatures out
+of %(signatures)s. Pointed at live lab alerts, every one of them would land in the unknown column
+and the model would return a confident number about nothing.</p>
+
+<p>So a second feature set was fitted: eleven columns that describe a window without naming a
+single signature. How many alerts arrived, over how long, how close together, how tightly the
+busiest minute was packed, how many distinct signatures were involved, and how severe they were.
+Severity earns its place by being a property of the Wazuh ruleset rather than of one capture,
+which is why it transfers where a rule id does not; it is worth roughly double on its own.</p>
+
+<table>
+<thead><tr><th>Feature</th><th class=n>Weight, standardised</th></tr></thead>
+<tbody>%(feat_rows)s</tbody>
+</table>
+
+<p>Measured the same way as everything else, it scores <strong>%(shape_ap)s average precision
+(sd %(shape_sd)s)</strong>. That keeps %(portable_pct)s&thinsp;%% of the full model, beats the
+best single rule on %(portable_over_rule)s folds of %(n_folds)s, and beats the base rate on
+%(portable_over_base)s of %(n_folds)s, which is %(portable_times)s times chance. The gap of
+%(portable_gap)s average precision against the full feature set is the measured price of
+portability, and it is not small. Most of the signal in the full model was in <em>which</em> rules
+fired, not in the shape of the burst, which is itself an argument for the rule based approach this
+lab already has.</p>
+
+<p>This is the model on the dashboard. It is fitted on %(m_train_eps)s episodes from
+%(m_train_nets)s networks, with its cutoff of %(m_thr)s chosen on %(m_thr_eps)s episodes from
+%(m_thr_nets)s, which the fit never saw, where it reached precision %(m_thr_prec)s at recall
+%(m_thr_rec)s. It runs inside the SSH poll the dashboard was already making, as a dot product in
+plain Python, so nothing is installed on the manager and no PyTorch goes near a box whose job is
+receiving alerts.</p>
+
+<div class="aside">
+<p><b>What the dashboard panel claims, and what it does not.</b> The panel prints the model's
+provenance and its measured average precision underneath itself, permanently, along with the
+sentence that it has never been measured on this lab. It presents the score as triage ordering and
+not as a detection. Bars are scaled against the model's cutoff rather than against the tallest bar
+on screen, because auto-scaling a narrow band of scores turns a 0.03 spread into a dramatic climb,
+which is a picture of noise.</p>
+</div>
+
+<h2>7. The synthetic results, and why they were discarded</h2>
+
+<p>Before the public data, the pipeline was developed against a generator,
+<code>make-synthetic.py</code>, which produces %(syn_episodes)s episodes with %(syn_attack)s
+attacks in them. Re-run for this report, the numbers are:</p>
+
+<table>
+<thead><tr><th>Model, on synthetic data</th><th class=n>f1</th>
+<th class=n>Average precision</th></tr></thead>
+<tbody>
+<tr><td>Rule 100111 alone</td><td class=n>%(syn_rule_f1)s</td><td class=n>&mdash;</td></tr>
+<tr><td>GRU over the sequence, 5 seeds</td><td class=n>%(syn_gru_f1)s (sd %(syn_gru_sd)s)</td>
+<td class=n>%(syn_gru_ap)s</td></tr>
+<tr><td>Logistic on counts and timing</td><td class=n>%(syn_log_f1)s</td>
+<td class=n>%(syn_log_ap)s</td></tr>
+</tbody>
+</table>
+
+<p>Everything near the ceiling, and none of it means anything. The generator builds in exactly two
+signals, that an attacker brute forces before persisting and moves between steps in seconds, and
+both are linearly separable from counts and a burst measure. A good score there was evidence that
+the pipeline ran, not that anything had been detected. Real alerts cost the GRU %(syn_drop)s of
+its f1.</p>
+
+<p>Reporting this is the point of including it. A model evaluated only on data produced by
+assumptions it then recovers will always look excellent, and the difference between
+%(syn_gru_ap)s and %(gru_ap)s is the entire distance between a demo and a measurement.</p>
+
+<h2>8. What this does not support</h2>
+
+<ul>
+<li><strong>It is not a test of this lab's detections.</strong> Rules 100100 to 100113 appear in
+no public dataset. Nothing here says whether they separate an attacker from an administrator in
+sequence.</li>
+<li><strong>It is not an alerting capability.</strong> At this base rate the best operating point
+found catches a fifth of intrusions at perfect precision, or drowns the queue. The deployed model
+is ordering, not detection.</li>
+<li><strong>The deployed model has never been measured on this network.</strong> Its
+%(shape_ap)s is what it scored on networks it had not seen. This lab is a ninth such network, so
+that is the honest expectation for it and not a result from it.</li>
+<li><strong>The GRU has not been given every chance.</strong> The conclusion is that a small
+recurrent model does not beat counting here, on this data, at this scale.</li>
+<li><strong>Windows scenarios are untouched.</strong> Rules 100100 to 100103 are unreachable from
+a Linux campaign.</li>
+</ul>
+
+<h2>9. What would change the answer</h2>
+
+<p>A campaign on the lab itself. <code>run-campaign.sh</code> drives the three scenarios against
+both endpoints alongside three standing accounts with deliberately different working shapes, and
+produces alerts carrying this lab's own rule ids with ground truth labels attached. That converts
+three of the five limitations above into measurements: whether the lab's rules separate in
+sequence, whether a per-user pattern of life helps, and what the deployed model actually scores
+here rather than elsewhere.</p>
+
+<p>It was trialled successfully for one hour on 17 September. The full run is 14 hours. It is now
+a specific question rather than a blocker, which is the main thing the public data bought.</p>
+
+<footer>
+Generated by <span class="mono">05-detection-modelling/report/build-report.py</span> on
+%(generated)s. Every figure is read from a measurement artefact or produced by a run the build
+makes itself; none is written into the template by hand. Method, code and the fold by fold results
+are in the repository under <span class="mono">05-detection-modelling/</span>.
+</footer>
+
+</body>
+</html>

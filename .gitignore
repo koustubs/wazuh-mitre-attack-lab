@@ -34,3 +34,7 @@ desktop.ini
 05-detection-modelling/data/
 05-detection-modelling/models/
 *.pt
+
+# The report page is an intermediate: build-report.py regenerates it from the
+# measurement artefacts every time, and the PDF beside the proposal is the deliverable.
+05-detection-modelling/report/report.html
