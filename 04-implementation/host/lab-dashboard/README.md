@@ -100,9 +100,13 @@ The number it leads with is not the model's. The model answers how unusual a win
 not how bad it is: forty level 3 alerts and one level 12 beside a new account can look alike to
 it. Severity is a 0 to 100 composite of six terms with the model as one of them, and the lab's
 own case, credential access followed by persistence, earns a multiplier because that pairing is a
-chain rather than two events. On the fabricated run used to test this, a quiet window scores 16,
-a brute force burst alone scores 29, and the same burst with an account creation beside it scores
-78. The rules in step 4 cannot tell those last two apart, which is the whole point of the panel.
+chain rather than two events. On the worked example in
+[the report](../../../docs/Detection-Modelling-Report.pdf), a quiet window of session opens
+scores 16, a brute force burst that trips rule 100111 scores 54, and the same burst with an
+account creation beside it scores 78. The rules in step 4 cannot tell those last two apart: they
+report a brute force alert and an account creation alert, and nothing saying they belong
+together. Those three numbers come out of `score.py` when the report is built, so this paragraph
+and the PDF cannot disagree.
 
 The weights are judgement rather than fitted parameters, and they live in one place,
 `05-detection-modelling/scorer/score.py`, so disagreeing with them is an edit rather than an
