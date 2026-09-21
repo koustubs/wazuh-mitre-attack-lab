@@ -277,6 +277,37 @@ on screen, because auto-scaling a narrow band of scores turns a 0.03 spread into
 which is a picture of noise.</p>
 </div>
 
+<h3>What the dashboard actually shows, which is not the model's number</h3>
+
+<p>One more step sits between the model and the panel, and it was added because the model's own
+output is the wrong thing to put in front of an analyst. It answers how unusual a window is. It
+does not answer how bad it is, and forty level 3 alerts look much like one level 12 beside a new
+account to something reading only shape and severity mass.</p>
+
+<p>So the panel leads with a 0 to 100 severity, a composite of six terms with the model as one of
+them, weighted %(w_model)s. The others are the highest rule level in the window, how much high
+level alerting there was rather than just the peak, how tightly the busiest minute was packed,
+how many distinct signatures were involved, and how many attack stages appeared. The total is
+multiplied by up to %(chain_max)s when credential access and persistence both appear, because
+that pairing is a chain rather than two events, and a chain is exactly what six single event
+rules cannot see between them.</p>
+
+<table>
+<thead><tr><th>Term</th><th>What it reads</th><th class=n>Weight</th></tr></thead>
+<tbody>%(sev_rows)s</tbody>
+</table>
+
+<p>On a fabricated run used to test the path end to end, a quiet window of session opens scores
+%(sev_quiet)s, a brute force burst on its own scores %(sev_brute)s, and the same burst with an
+account creation beside it scores %(sev_chain)s. Step 4 cannot separate the last two: it reports
+a brute force alert and an account creation alert, and nothing that says they belong together.</p>
+
+<p>Every constant in that composite is judgement rather than a fitted parameter, and the panel
+says so. They are in one file, <code>05-detection-modelling/scorer/score.py</code>, and the panel
+prints the weights it was actually given rather than a copy, so the explanation on screen cannot
+drift from the arithmetic behind it. A window reaching 50 becomes a finding, and findings export
+to their own PDF.</p>
+
 <h2>7. The synthetic results, and why they were discarded</h2>
 
 <p>Before the public data, the pipeline was developed against a generator,

@@ -305,6 +305,44 @@
    "tp": 6
   }
  },
+ "severity": {
+  "brute": 54.5,
+  "chainBonus": 0.3,
+  "chained": 77.9,
+  "quiet": 15.8,
+  "weights": [
+   {
+    "key": "model",
+    "label": "How far past its cutoff the model put this window",
+    "weight": 0.28
+   },
+   {
+    "key": "peak",
+    "label": "The highest Wazuh rule level in the window",
+    "weight": 0.18
+   },
+   {
+    "key": "mass",
+    "label": "How much high level alerting there was, not just the peak",
+    "weight": 0.16
+   },
+   {
+    "key": "velocity",
+    "label": "How tightly the busiest minute was packed",
+    "weight": 0.12
+   },
+   {
+    "key": "breadth",
+    "label": "How many distinct signatures were involved",
+    "weight": 0.1
+   },
+   {
+    "key": "coverage",
+    "label": "How many distinct attack stages appeared",
+    "weight": 0.16
+   }
+  ]
+ },
  "summary": {
   "base": {
    "mean": 0.021067897294706067,

@@ -206,6 +206,23 @@ def collect():
     # model on its best fold, which is the most favourable honest reading available.
     data["operating"] = operating_points(folds)
 
+    # The severity composite, measured the same way as everything else: by running it. Three
+    # windows built to be obviously different, so the number in the report is the one the code
+    # produces rather than the one the prose would like it to produce.
+    sys.path.insert(0, str(STEP / "scorer"))
+    import score as pure
+    thr = data["model"]["threshold"]
+    quiet = [{"at": i * 15, "ruleId": 5501, "level": 3} for i in range(20)]
+    brute = [{"at": i * 2, "ruleId": 100110, "level": 3} for i in range(40)] +             [{"at": 40 + i * 5, "ruleId": 100111, "level": 10} for i in range(4)]
+    chain = brute + [{"at": 100, "ruleId": 100112, "level": 6}]
+    data["severity"] = {
+        "weights": [{"key": k, "weight": w, "label": l} for k, w, l in pure.SEVERITY_WEIGHTS],
+        "chainBonus": pure.CHAIN_BONUS,
+        "quiet": pure.severity(quiet, 0.51, thr)["score"],
+        "brute": pure.severity(brute, 0.55, thr)["score"],
+        "chained": pure.severity(chain, 0.58, thr)["score"],
+    }
+
     data["generated"] = datetime.date.today().isoformat()
     return data
 
@@ -300,6 +317,15 @@ def page(d):
         "m_thr_rec": "%.3f" % m["thresholdChosenOn"]["recall"],
         "feat_rows": feat_rows,
         "window": int(m["windowSeconds"]),
+        "sev_rows": "".join(
+            "<tr><td class=mono>%s</td><td>%s</td><td class=n>%.2f</td></tr>"
+            % (e(c["key"]), e(c["label"]), c["weight"]) for c in d["severity"]["weights"]),
+        "w_model": "%.2f" % next(c["weight"] for c in d["severity"]["weights"]
+                                 if c["key"] == "model"),
+        "chain_max": "%.2f" % (1.0 + d["severity"]["chainBonus"]),
+        "sev_quiet": "%.0f" % d["severity"]["quiet"],
+        "sev_brute": "%.0f" % d["severity"]["brute"],
+        "sev_chain": "%.0f" % d["severity"]["chained"],
     }
 
 
