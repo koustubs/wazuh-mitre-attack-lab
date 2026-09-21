@@ -166,6 +166,25 @@
   .labbar .headline { font-size: 15.5px; font-weight: 650; letter-spacing: -0.01em; }
   .labbar .detail { font-size: 12.5px; color: var(--ink-soft); }
   .labbar .detail.bad { color: var(--danger); }
+  /* One column per window, newest on the right. Heights are the score, so the shape of the
+     strip is the ranking, which is the only claim this model is making. */
+  .strip { display: flex; align-items: flex-end; gap: 6px; height: 76px; margin: 2px 0 12px; }
+  /* Capped rather than stretched. Four windows on a lab that has just started should look like
+     four windows, not like four panels wide enough to be mistaken for something else. */
+  .strip > div { flex: 1 1 0; max-width: 86px; min-width: 0; display: flex; flex-direction: column;
+                 justify-content: flex-end; align-items: stretch; height: 100%; }
+  .strip i { display: block; background: var(--info); border-radius: 3px 3px 0 0; }
+  .strip .over i { background: var(--danger); }
+  /* The newest window is still filling, so its bar is drawn hollow. A solid bar there would
+     invite a comparison against the completed ones that is not available yet. */
+  .strip .filling i { background: repeating-linear-gradient(115deg, var(--info) 0 5px, transparent 5px 10px); }
+  .strip b { font-size: 10.5px; font-weight: 600; color: var(--ink-soft); text-align: center;
+             font-variant-numeric: tabular-nums; margin-top: 5px; line-height: 1.35; }
+  .strip b .faint { font-size: 10px; font-weight: 500; }
+  .bignum { font-size: 27px; font-weight: 650; letter-spacing: -0.02em;
+            font-variant-numeric: tabular-nums; }
+  .provenance { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line);
+                color: var(--ink-faint); font-size: 11.5px; line-height: 1.55; }
   .bar { height: 4px; border-radius: 999px; background: var(--line); overflow: hidden; margin-top: 5px; width: 100%; }
   .bar > i { display: block; height: 100%; background: var(--info); transition: width .4s ease; }
   /* A sequence is a wait, not a freeze. The stripe says the page is still watching. */
@@ -292,6 +311,14 @@
     <span class="faint" id="covMeta"></span>
   </div>
   <div id="coverage"><span class="faint">Waiting for the manager.</span></div>
+</div>
+
+<div class="panel">
+  <div class="panelhead">
+    <h3>Alert sequence score</h3>
+    <span class="faint" id="scoreMeta"></span>
+  </div>
+  <div id="scoring"><span class="faint">Waiting for the manager.</span></div>
 </div>
 
 <div class="layout">
@@ -511,6 +538,100 @@ function renderCoverage(data) {
     ${hint ? `<div class="faint" style="margin-top:9px">${esc(hint)}</div>` : ""}`;
 }
 
+// The one panel here that reports a model rather than a rule, and the one that needs the most
+// care in how it is phrased. It is showing a score from something fitted on other people's
+// networks, so everything it claims is bounded on the panel itself: what the model was trained
+// on, what it measured there, and the fact that it has never been measured here.
+//
+// The strip is the point. The model's measured claim is that it ranks attack windows above
+// background, not that any single score means anything, so the panel leads with the shape of
+// the last hour rather than with one number dressed up as a verdict.
+function renderScoring(data) {
+  const box = document.getElementById("scoring");
+  const meta = document.getElementById("scoreMeta");
+  const h = data.health;
+  meta.textContent = "";
+
+  if (!h || !h.reachable) { box.innerHTML = `<span class="faint">Waiting for the manager.</span>`; return; }
+
+  const hint = setupHint(h, "alerts");
+  if (hint) { box.innerHTML = `<span class="faint">${esc(hint)}</span>`; return; }
+
+  const s = h.scoring;
+  if (!s) { box.innerHTML = `<span class="faint">The manager did not return a score.</span>`; return; }
+  if (s.note === "no-model") {
+    box.innerHTML = `<span class="faint">No model on this machine. Run
+      <code>python export-model.py</code> in <code>05-detection-modelling</code> to fit one.
+      Everything else on this page works without it.</span>`;
+    return;
+  }
+  if (s.note === "no-alerts") {
+    box.innerHTML = `<span class="faint">No alerts to window yet.</span>`;
+    return;
+  }
+
+  const wins = s.windows || [];
+  const done = wins.filter(w => !w.partial);
+  const live = wins.length ? wins[wins.length - 1] : null;
+  const top = s.top;
+  const m = s.model || {};
+
+  meta.textContent = Math.round(s.windowSeconds) + "s windows · " +
+    s.covers.windows + " since " + s.covers.from;
+
+  // Scaled against the cutoff, not against 1.0 and not against the tallest bar here.
+  //
+  // Auto-scaling to the range on screen was tried and rejected: on a quiet lab every window
+  // lands in a narrow band and stretching that band to fill the panel turns a 0.03 spread into
+  // a dramatic climb, which is a picture of noise. Against the cutoff, bars that are all short
+  // means nothing here is close, and that is the true reading.
+  //
+  // The score is printed under each bar as well, because that band is genuinely narrow and the
+  // ordering is the only claim the model has measured support for. Numbers carry the order;
+  // the bars carry the distance from the cutoff.
+  const ceiling = Math.max(s.threshold, ...wins.map(w => w.score), 0.01);
+  const strip = wins.map(w => {
+    const pct = Math.max(4, Math.round(100 * w.score / ceiling));
+    const cls = [w.over ? "over" : "", w.partial ? "filling" : ""].filter(Boolean).join(" ");
+    const title = w.at + " · score " + w.score.toFixed(3) + " · " + w.alerts + " alerts" +
+      (w.partial ? " · still filling" : "");
+    return `<div class="${cls}" title="${esc(title)}"><i style="height:${pct}%"></i>
+      <b>${w.score.toFixed(2)}<br><span class="faint">${esc(w.at)}</span></b></div>`;
+  }).join("");
+
+  const highest = top ? `<div class="metric"><span class="k">Highest completed window</span>
+      <span class="v">${top.score.toFixed(3)} <span class="faint">at ${esc(top.at)}</span></span></div>` : "";
+
+  const rules = (s.topRules || []).length ? `<table class="alerts" style="margin-top:4px">
+    <thead><tr><th>Rule</th><th>Level</th><th>What fired in that window</th><th>Count</th></tr></thead>
+    <tbody>${s.topRules.map(r => `<tr>
+      <td class="n">${esc(r.id)}</td>
+      <td class="n"><span class="lvl ${r.level >= 10 ? "hi" : ""}">${r.level}</span></td>
+      <td>${esc(r.desc)}</td>
+      <td class="n">${r.count}</td></tr>`).join("")}</tbody></table>` : "";
+
+  box.innerHTML = `
+    <div class="hostbar" style="margin-bottom:12px">
+      <div class="metric"><span class="k">Current window${live && live.partial ? ", still filling" : ""}</span>
+        <span class="v bignum">${live ? live.score.toFixed(3) : "&mdash;"}</span></div>
+      ${highest}
+      <div class="metric"><span class="k">Windows over the cutoff</span>
+        <span class="v">${done.filter(w => w.over).length} of ${done.length} completed</span></div>
+      <div class="metric"><span class="k">Cutoff</span>
+        <span class="v">${s.threshold.toFixed(3)}</span></div>
+    </div>
+    <div class="strip">${strip}</div>
+    ${rules}
+    <div class="provenance">
+      Logistic regression on eleven features describing the shape and severity of a window, with
+      no rule identity in it. Fitted on ${m.episodes ? m.episodes.toLocaleString() : "?"} episodes
+      from the ${esc(m.dataset || "training set")}, ${esc(m.generated || "")}. Scored
+      ${m.ap != null ? m.ap.toFixed(3) : "?"} average precision against a
+      ${m.baseRate != null ? m.baseRate.toFixed(3) : "?"} base rate under ${esc(m.protocol || "")}.
+      <br>${esc(m.caveat || "")}
+    </div>`;
+}
+
 function renderPipeline(data) {
   const box = document.getElementById("pipeline");
   const meta = document.getElementById("pipeMeta");
@@ -704,6 +825,7 @@ function render(data) {
   renderLab(data);
   renderHealth(data.health);
   renderCoverage(data);
+  renderScoring(data);
   renderPipeline(data);
   renderAlerts(data.health);
   renderManagerLog(data.health);

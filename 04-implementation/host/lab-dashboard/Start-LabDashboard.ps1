@@ -130,7 +130,7 @@ $script:LastSequencePoll = [datetime]::MinValue
 # which has already cost this project a corrupted file on the manager; base64 has no character
 # that any shell treats specially.
 $RemoteStatusScript = @'
-import datetime, json, os, subprocess
+import base64, calendar, datetime, json, math, os, subprocess
 
 def run(cmd, timeout=8):
     try:
@@ -141,7 +141,13 @@ def run(cmd, timeout=8):
 
 out = {'services': [], 'agents': [], 'alerts': [], 'coverage': {}, 'attack': [],
        'rate': [], 'log': [], 'window': None, 'disk': None, 'indexer': None,
-       'missing': []}
+       'scoring': None, 'missing': []}
+
+# The deployed model, and the code that evaluates it. Both are substituted in before this
+# script is encoded; see the note beside $ScorerPath. Absent, the two markers stay as they
+# are and the scoring block below finds no model and reports that rather than failing.
+SCORER_MODEL_B64 = '__SCORER_MODEL_B64__'
+# __SCORER_MODULE__
 
 for unit in ('wazuh-manager', 'wazuh-indexer', 'wazuh-dashboard', 'filebeat'):
     rc, text = run(['systemctl', 'is-active', unit], 5)
@@ -239,6 +245,118 @@ for a in records:
         tally[tech] = tally.get(tech, 0) + 1
 out['attack'] = [{'tech': k, 'count': v} for k, v in sorted(tally.items(), key=lambda kv: -kv[1])]
 
+# Sequence scoring. The rules above judge one event at a time; this judges a run of them.
+#
+# It runs here, inside the poll that was already happening, because the model that won is
+# logistic regression over eleven numbers and the whole of inference is a dot product and one
+# exponential. There is no second service, no open port, nothing installed on the manager and
+# no extra round trip. Shipping PyTorch to a box whose job is receiving alerts, to evaluate
+# 5,458 parameters that lost on all eight folds, would have been the wrong trade twice over.
+
+
+def _epoch(ts):
+    """2026-09-21T03:15:42.123+0000 to seconds.
+
+    The offset is parsed off rather than applied. Every record here comes from one manager and
+    carries the same offset, so it cancels out of every gap and duration the model looks at,
+    and dropping it avoids depending on a %z that older builds of strptime get wrong.
+    """
+    try:
+        base = datetime.datetime.strptime(ts[:19], '%Y-%m-%dT%H:%M:%S')
+        frac = float('0' + ts[19:23]) if len(ts) > 19 and ts[19] == '.' else 0.0
+        return calendar.timegm(base.timetuple()) + frac
+    except Exception:
+        return None
+
+
+try:
+    _model = json.loads(base64.b64decode(SCORER_MODEL_B64).decode('utf-8'))
+    if _model.get('columns') != COLUMNS:
+        _model = None
+except Exception:
+    _model = None
+
+# A panel that says why it is empty is worth more than one that is simply empty, and the
+# two reasons are different problems: no model means the modelling step was never run on
+# the host launching this, no alerts means the lab is quiet.
+if _model is None:
+    out['scoring'] = {'note': 'no-model'}
+elif not records:
+    out['scoring'] = {'note': 'no-alerts'}
+else:
+    width = float(_model.get('windowSeconds') or 300.0)
+    # Anchored on the clock rather than on the first alert, so a window boundary is a round
+    # five minutes and two polls a second apart describe the same window rather than sliding.
+    buckets = {}
+    for a in records:
+        t = _epoch(a.get('timestamp') or '')
+        if t is None:
+            continue
+        rule = a.get('rule', {}) or {}
+        try:
+            rid = int(rule.get('id'))
+        except (TypeError, ValueError):
+            continue
+        lo = width * math.floor(t / width)
+        buckets.setdefault(lo, []).append({
+            'at': t - lo, 'ruleId': rid, 'level': int(rule.get('level') or 0),
+            'desc': (rule.get('description') or '')[:70]})
+
+    # Which window is still filling. Taken from the newest record rather than from the
+    # clock, because the manager's idea of now and the timestamps on its own alerts have
+    # to agree for this to mean anything, and the alerts are the authority.
+    last = _epoch(records[-1].get('timestamp') or '')
+    current = width * math.floor(last / width) if last is not None else None
+
+    shown = sorted(buckets)[-12:]
+    wins = []
+    for lo in shown:
+        al = buckets[lo]
+        p = score(_model, features(al))
+        wins.append({
+            'at': datetime.datetime.utcfromtimestamp(lo).strftime('%H:%M'),
+            'epoch': lo,
+            'score': round(p, 4),
+            'alerts': len(al),
+            'over': bool(p >= _model['threshold']),
+            # The newest window is still filling. Its alert count and duration are therefore
+            # low for a reason that has nothing to do with what is happening, so its score is
+            # not comparable with the completed ones and the page says so rather than drawing
+            # a dip that looks like the attack stopping.
+            'partial': bool(lo == current),
+        })
+
+    done = [w for w in wins if not w['partial']]
+    top = max(done or wins, key=lambda w: w['score']) if wins else None
+    detail = []
+    if top is not None:
+        seen = {}
+        for al in buckets[top['epoch']]:
+            e = seen.setdefault(al['ruleId'], {'id': al['ruleId'], 'count': 0,
+                                               'level': al['level'], 'desc': al['desc']})
+            e['count'] += 1
+        detail = sorted(seen.values(), key=lambda e: (-e['count'], e['id']))[:8]
+
+    span = sorted(buckets)
+    out['scoring'] = {
+        'windowSeconds': width,
+        'threshold': _model['threshold'],
+        'windows': wins,
+        'top': top,
+        'topRules': detail,
+        'covers': {'from': datetime.datetime.utcfromtimestamp(span[0]).strftime('%H:%M'),
+                   'windows': len(span)},
+        'model': {
+            'ap': _model.get('measured', {}).get('averagePrecision'),
+            'baseRate': _model.get('measured', {}).get('baseRate'),
+            'protocol': _model.get('measured', {}).get('protocol'),
+            'dataset': _model.get('trainedOn', {}).get('dataset'),
+            'episodes': _model.get('trainedOn', {}).get('episodes'),
+            'caveat': _model.get('caveat'),
+            'generated': _model.get('generated'),
+        },
+    }
+
 now = datetime.datetime.now()
 keys = [(now - datetime.timedelta(hours=i)).strftime('%Y-%m-%dT%H') for i in range(11, -1, -1)]
 counts = dict((k, 0) for k in keys)
@@ -272,6 +390,39 @@ except Exception:
 
 print(json.dumps(out))
 '@
+# The scorer is two files from the modelling step, substituted into the script above rather
+# than duplicated here. score.py is the feature code and model.json is the fitted model with
+# the measurement that produced it, and keeping them where they were generated is what stops
+# the dashboard scoring with weights nobody can trace.
+#
+# Both travel inside the same base64 payload as everything else, so nothing is installed on
+# the manager and there is no second thing to keep in step. The model is encoded separately
+# on the way in because it is the one part that is not Python source and does not need to be
+# read by anything between here and there.
+#
+# Missing either file is not an error. The markers stay unsubstituted, the remote script finds
+# no model, and the panel says the model file is absent. A lab that has never run the
+# modelling step still gets a working dashboard.
+$script:ScorerPath = Join-Path $PSScriptRoot '..\..\..\05-detection-modelling\scorer'
+$script:ScorerLoaded = $false
+try {
+    $modelPath = Join-Path $script:ScorerPath 'model.json'
+    $codePath = Join-Path $script:ScorerPath 'score.py'
+    if ((Test-Path -LiteralPath $modelPath) -and (Test-Path -LiteralPath $codePath)) {
+        $modelText = (Get-Content -LiteralPath $modelPath -Raw)
+        $codeText = (Get-Content -LiteralPath $codePath -Raw) -replace "`r`n", "`n"
+        # Only the three names the remote script calls. Importing the module is not an option
+        # when there is no file on the far side to import.
+        $RemoteStatusScript = $RemoteStatusScript -replace '# __SCORER_MODULE__', $codeText
+        $RemoteStatusScript = $RemoteStatusScript -replace '__SCORER_MODEL_B64__',
+            [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($modelText))
+        $script:ScorerLoaded = $true
+    }
+} catch {
+    # A damaged model file costs the one panel, not the dashboard.
+    $script:ScorerLoaded = $false
+}
+
 $script:StatusB64 = [Convert]::ToBase64String(
     [Text.Encoding]::UTF8.GetBytes(($RemoteStatusScript -replace "`r`n", "`n")))
 
@@ -439,6 +590,7 @@ function Get-LabHealth {
             window    = $parsed.window
             disk      = $parsed.disk
             indexer   = $parsed.indexer
+            scoring   = $parsed.scoring
             missing   = $missing
             setupDone = ($missing.Count -eq 0)
         }

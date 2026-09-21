@@ -91,6 +91,30 @@ worth showing someone: it is the project's results table, except current rather 
 A rule that exists and has never fired is the state worth noticing, and it is invisible in any
 view built from alerts alone, because nothing is there to see. Here it reads "never".
 
+**Alert sequence score.** The one panel showing a model rather than a rule. Every rule above
+judges a single event; this judges a run of them. Alerts are bucketed into five minute windows and
+each window is scored by the model from [step 5](../../../05-detection-modelling/README.md), with
+the score and the time under each bar, the rules that fired in the highest scoring completed
+window, and the model's provenance printed underneath.
+
+The newest bar is drawn hollow because that window is still filling. Its alert count is low for a
+reason that has nothing to do with what is happening, so its score is not comparable with the
+completed ones and the panel says so rather than drawing a dip that looks like an attack stopping.
+
+Bars are scaled against the model's cutoff, not against the tallest bar on screen. Auto-scaling
+was tried and rejected: on a quiet lab every window lands in a narrow band, and stretching that
+band to fill the panel turns a 0.03 spread into a dramatic climb, which is a picture of noise.
+
+What the panel is careful not to claim is the important part. The model was fitted on eight public
+networks, because no public dataset contains this lab's rules, and it has never been measured
+here. Its own measurement travels in the model file and is printed on the panel: average precision
+0.177 against a 0.021 base rate, on networks it had never seen. That is eight times better than
+chance and well short of an alerting rule, so the panel is triage ordering and says as much.
+
+The model file is read from `05-detection-modelling/scorer/` at startup and travels inside the
+same payload as everything else, so nothing is installed on the manager. A clone that has never
+run the modelling step gets the rest of the dashboard and a panel saying the model is absent.
+
 **Pipeline.** Manager disk, alert volume over the last twelve hours, the busiest hour, and, once
 the one-time setup has run, indexer health, alert document count, index size and whether the
 retention policy is still attached. Retention is not something Wazuh ships, so an index with no
@@ -215,6 +239,15 @@ than disappearing.
 
 A poll costs about 90 ms and runs every 3 seconds. It stops when the tab is hidden, so leaving
 this open in a background tab costs nothing. There is also a Pause button.
+
+Scoring rides inside that rather than beside it. It runs in the status script the manager was
+already being sent, so there is no second round trip, no service and no open port. Twelve windows
+of eleven features is a dot product and an exponential each: 4 ms for the manager's full 800
+record sample, measured on this host, and some multiple of that on a 2 vCPU guest, against an SSH
+round trip costing ten times more before any of it starts.
+
+That is the whole argument for the model that won. Shipping PyTorch to a box whose job is
+receiving alerts, to evaluate the model that lost on all eight folds, was never worth it.
 
 The exception is a sequence in progress. The server advances it one step per request, so it only
 moves while the page is asking; going quiet part way through a bring-up would leave it stalled mid
