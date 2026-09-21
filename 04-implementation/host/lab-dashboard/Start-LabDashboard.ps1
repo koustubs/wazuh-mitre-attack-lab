@@ -298,9 +298,12 @@ else:
         except (TypeError, ValueError):
             continue
         lo = width * math.floor(t / width)
+        mitre = rule.get('mitre', {}) or {}
         buckets.setdefault(lo, []).append({
             'at': t - lo, 'ruleId': rid, 'level': int(rule.get('level') or 0),
-            'desc': (rule.get('description') or '')[:70]})
+            'desc': (rule.get('description') or '')[:70],
+            'tactics': mitre.get('tactic') or [],
+            'techniques': mitre.get('id') or mitre.get('technique') or []})
 
     # Which window is still filling. Taken from the newest record rather than from the
     # clock, because the manager's idea of now and the timestamps on its own alerts have
@@ -313,7 +316,11 @@ else:
     for lo in shown:
         al = buckets[lo]
         p = score(_model, features(al))
+        sev = severity(al, p, _model['threshold'])
         wins.append({
+            'severity': sev['score'],
+            'band': sev['band'],
+            'working': sev,
             'at': datetime.datetime.utcfromtimestamp(lo).strftime('%H:%M'),
             'epoch': lo,
             'score': round(p, 4),
@@ -327,15 +334,33 @@ else:
         })
 
     done = [w for w in wins if not w['partial']]
-    top = max(done or wins, key=lambda w: w['score']) if wins else None
-    detail = []
-    if top is not None:
+    # Ranked by severity rather than by the model, because severity is what the panel
+    # leads with and the model is one of six terms inside it.
+    top = max(done or wins, key=lambda w: w['severity']) if wins else None
+
+    def rules_in(epoch):
         seen = {}
-        for al in buckets[top['epoch']]:
-            e = seen.setdefault(al['ruleId'], {'id': al['ruleId'], 'count': 0,
-                                               'level': al['level'], 'desc': al['desc']})
+        for al in buckets[epoch]:
+            e = seen.setdefault(al['ruleId'],
+                                {'id': al['ruleId'], 'count': 0, 'level': al['level'],
+                                 'desc': al['desc'],
+                                 'tech': ', '.join(al.get('techniques') or [])})
             e['count'] += 1
-        detail = sorted(seen.values(), key=lambda e: (-e['count'], e['id']))[:8]
+        return sorted(seen.values(), key=lambda e: (-e['level'], -e['count'], e['id']))
+
+    detail = rules_in(top['epoch'])[:8] if top is not None else []
+
+    # A finding is a completed window that reached elevated or above. Completed, because a
+    # window still filling has not had its chance to be worse, and reporting it as a finding
+    # would mean the list changed under the reader every three seconds.
+    findings = []
+    for w in done:
+        if w['severity'] < 50:
+            continue
+        f = dict(w)
+        f['rules'] = rules_in(w['epoch'])[:12]
+        findings.append(f)
+    findings.sort(key=lambda f: -f['severity'])
 
     span = sorted(buckets)
     out['scoring'] = {
@@ -344,6 +369,13 @@ else:
         'windows': wins,
         'top': top,
         'topRules': detail,
+        'findings': findings,
+        # The constants, sent rather than duplicated in the page, so the explainer shows
+        # the weights the score was actually built with and cannot drift from them.
+        'severityWeights': [{'key': k, 'weight': w, 'label': l}
+                            for k, w, l in SEVERITY_WEIGHTS],
+        'chainBonus': CHAIN_BONUS,
+        'bands': [{'floor': f, 'name': nm} for f, nm in BANDS],
         'covers': {'from': datetime.datetime.utcfromtimestamp(span[0]).strftime('%H:%M'),
                    'windows': len(span)},
         'model': {
@@ -1014,6 +1046,220 @@ function Get-LabPreflight {
 # ---------------------------------------------------------------------------------------------
 # Credentials
 
+function ConvertTo-LabPdf {
+    <#
+    Print an HTML string to a PDF with Edge, headless.
+
+    05-detection-modelling/report/Build-Report.ps1 does the same thing and they are deliberately
+    not shared. That one is a build step run by hand in the modelling directory; this one is
+    inside a server that has to keep working on a clone where the modelling step was never run.
+    Putting the helper in either place would make the other depend on a directory it cannot
+    assume exists, so twenty lines are written twice and this comment names the other copy.
+
+    The page is staged in a temporary directory and the result moved afterwards. This
+    repository's path contains a space, and PowerShell 5.1 passes --print-to-pdf=C:\...\cybersec
+    intern\... to a native executable without quoting the value, so Edge reads two targets and
+    refuses the whole run. Keeping spaces away from native arguments is the fix that works;
+    quoting harder is the one that does not.
+    #>
+    param([Parameter(Mandatory)][string]$Html, [Parameter(Mandatory)][string]$OutFile)
+
+    $edge = @(
+        "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+        "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+    ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $edge) { throw 'Could not find msedge.exe, so there is nothing here that makes a PDF.' }
+
+    $work = Join-Path ([IO.Path]::GetTempPath()) ("lab-findings-" + [Guid]::NewGuid().ToString('N'))
+    $null = New-Item -ItemType Directory -Path $work
+    try {
+        $page = Join-Path $work 'findings.html'
+        [IO.File]::WriteAllText($page, $Html, (New-Object Text.UTF8Encoding $false))
+        $staged = Join-Path $work 'findings.pdf'
+        $p = Start-Process -FilePath $edge -WindowStyle Hidden -PassThru -Wait -ArgumentList @(
+            '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+            '--disable-extensions', "--user-data-dir=$(Join-Path $work 'profile')",
+            '--no-pdf-header-footer', "--print-to-pdf=$staged", ([Uri]$page).AbsoluteUri
+        )
+        if ($p.ExitCode -ne 0) { throw "Edge exited with $($p.ExitCode)." }
+        if (-not (Test-Path -LiteralPath $staged)) { throw 'Edge wrote no file.' }
+        $dir = Split-Path -Parent $OutFile
+        if (-not (Test-Path -LiteralPath $dir)) { $null = New-Item -ItemType Directory -Path $dir }
+        Move-Item -LiteralPath $staged -Destination $OutFile -Force
+    } finally {
+        Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Export-LabFindings {
+    <#
+    Write the currently flagged windows to a PDF.
+
+    Built from the last poll rather than by asking the manager again, so what lands in the file
+    is exactly what the person was looking at when they pressed the button. Asking again would
+    produce a document that disagrees with the screen it came from, which is the one property a
+    findings export must not have.
+
+    It goes under evidence/, which is gitignored in full apart from two named files. A finding
+    carries account names, source addresses and rule descriptions from a live endpoint, and that
+    is evidence rather than documentation.
+    #>
+    $h = $script:HealthCache
+    if (-not $h -or -not $h.reachable) {
+        return [ordered]@{ ok = $false; error = 'The manager is not answering, so there is nothing to export.' }
+    }
+    $sc = $h.scoring
+    if (-not $sc -or -not $sc.findings -or @($sc.findings).Count -eq 0) {
+        return [ordered]@{ ok = $false; error = 'No window has reached elevated, so there is nothing to export.' }
+    }
+
+    $findings = @($sc.findings)
+    $stamp = Get-Date
+    $name = 'findings-' + $stamp.ToString('yyyyMMdd-HHmmss') + '.pdf'
+    $out = Join-Path $PSScriptRoot ('..\..\evidence\findings\' + $name)
+    $out = [IO.Path]::GetFullPath($out)
+
+    $css = @'
+@page { size: A4; margin: 16mm 15mm; }
+body { font: 10pt/1.5 "Charter","Georgia","Cambria",serif; color: #17171a; margin: 0; }
+h1 { font-size: 17pt; margin: 0 0 4px; letter-spacing: -0.01em; }
+h2 { font-size: 11.5pt; margin: 22px 0 7px; padding-bottom: 4px; border-bottom: 1.4px solid #24242a; }
+h3 { font-size: 9.5pt; margin: 13px 0 4px; text-transform: uppercase; letter-spacing: .05em; color: #55555e; }
+p { margin: 0 0 8px; }
+.meta { color: #85858e; font-size: 8.5pt; margin: 0 0 16px; padding-bottom: 10px; border-bottom: 1px solid #d9d9d4; }
+.sub { color: #55555e; font-size: 9.5pt; margin: 0 0 3px; }
+table { border-collapse: collapse; width: 100%; margin: 7px 0 11px; font-size: 9pt; }
+th { text-align: left; font-size: 7.5pt; text-transform: uppercase; letter-spacing: .05em; color: #55555e;
+     border-bottom: 1.2px solid #24242a; padding: 0 7px 3px 0; font-weight: 650; }
+td { padding: 4px 7px 4px 0; border-bottom: 1px solid #e4e4df; vertical-align: top; }
+td.n, th.n { text-align: right; padding-right: 0; padding-left: 11px;
+            font-variant-numeric: tabular-nums; white-space: nowrap; }
+th:last-child, td:last-child { padding-right: 0; text-align: right; }
+.band { display: inline-block; font-size: 8pt; font-weight: 650; text-transform: uppercase;
+        letter-spacing: .05em; padding: 1px 6px; border-radius: 999px; border: 1px solid #d9d9d4; }
+.band.elevated { color: #854f0b; background: #faeeda; border-color: #e6cfa6; }
+.band.high { color: #9d2b2b; background: #fcebeb; border-color: #eec4c4; }
+.band.critical { color: #fff; background: #9d2b2b; border-color: #9d2b2b; }
+.card { border: 1px solid #d9d9d4; border-radius: 5px; padding: 11px 13px; margin: 0 0 13px;
+        break-inside: avoid; page-break-inside: avoid; }
+.card .top { display: flex; align-items: baseline; gap: 11px; flex-wrap: wrap; margin-bottom: 3px; }
+.card .score { font-size: 15pt; font-weight: 660; font-variant-numeric: tabular-nums; }
+.card .when { font-weight: 640; font-variant-numeric: tabular-nums; }
+.formula { display: block; background: #f3f3ef; border: 1px solid #e4e4df; border-radius: 4px;
+           padding: 8px 10px; margin: 6px 0 9px; font: 8.5pt/1.7 Consolas, monospace;
+           white-space: pre-wrap; }
+.aside { background: #f5f5f1; border: 1px solid #d9d9d4; border-radius: 4px; padding: 9px 12px;
+         margin: 11px 0; font-size: 9pt; }
+.aside p:last-child { margin-bottom: 0; }
+footer { margin-top: 20px; padding-top: 9px; border-top: 1px solid #d9d9d4; color: #85858e; font-size: 8pt; }
+h2, h3 { break-after: avoid; page-break-after: avoid; }
+'@
+
+    $esc = {
+        param($t)
+        [Security.SecurityElement]::Escape([string]$t)
+    }
+
+    $cards = foreach ($f in $findings) {
+        $wk = $f.working
+        $terms = foreach ($c in $wk.components) {
+            '<tr><td>{0}</td><td>{1}</td><td class=n>{2}</td><td class=n>{3:N3}</td><td class=n>x{4:N2}</td><td class=n>{5:N2}</td></tr>' -f
+                (& $esc $c.key), (& $esc $c.label), (& $esc $c.raw), [double]$c.value, [double]$c.weight, [double]$c.contribution
+        }
+        $rules = foreach ($r in @($f.rules)) {
+            '<tr><td class=n>{0}</td><td class=n>{1}</td><td>{2}</td><td class=n>{3}</td><td class=n>{4}</td></tr>' -f
+                (& $esc $r.id), [int]$r.level, (& $esc $r.desc), (& $esc $r.tech), [int]$r.count
+        }
+        $chain = if ($wk.chained) {
+            'Base {0:N2}, multiplied by {1:N4} because credential access and persistence both appear in this window. Severity {2:N1}.' -f [double]$wk.base, [double]$wk.chain, [double]$wk.score
+        } else {
+            'Base {0:N2}, with no chain multiplier: only one stage is present. Severity {1:N1}.' -f [double]$wk.base, [double]$wk.score
+        }
+            # Stages rather than raw ATT&CK strings, because a stage can be established from a rule
+        # id where the alert carries no ATT&CK metadata, and the score already counts it that way.
+        $stages = if (@($wk.stages).Count) { (& $esc (@($wk.stages) -join ', ')) } else { 'none identified' }
+        $named = if (@($wk.tactics).Count) { '' } else { ' (from rule identity; these alerts carry no ATT&amp;CK metadata)' }
+
+        @"
+<div class="card">
+  <div class="top">
+    <span class="when">$(& $esc $f.at)</span>
+    <span class="score">$('{0:N1}' -f [double]$f.severity)</span>
+    <span class="band $(& $esc $f.band)">$(& $esc $f.band)</span>
+    <span>$([int]$f.alerts) alerts &middot; model $('{0:N3}' -f [double]$f.score)</span>
+  </div>
+  <p class="sub">Stages present: $stages$named</p>
+  <h3>How this score was reached</h3>
+  <table>
+    <thead><tr><th>Term</th><th>What it reads</th><th class=n>Raw</th><th class=n>Norm</th><th class=n>Weight</th><th class=n>Points</th></tr></thead>
+    <tbody>$($terms -join '')</tbody>
+  </table>
+  <p>$chain</p>
+  <h3>What fired in this window</h3>
+  <table>
+    <thead><tr><th>Rule</th><th class=n>Level</th><th>Description</th><th class=n>ATT&amp;CK</th><th class=n>Count</th></tr></thead>
+    <tbody>$($rules -join '')</tbody>
+  </table>
+</div>
+"@
+    }
+
+    $weights = foreach ($w in @($sc.severityWeights)) {
+        '<tr><td>{0}</td><td>{1}</td><td class=n>{2:N2}</td></tr>' -f (& $esc $w.key), (& $esc $w.label), [double]$w.weight
+    }
+
+    $m = $sc.model
+    $html = @"
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Lab findings $($stamp.ToString('yyyy-MM-dd HH:mm'))</title><style>$css</style></head><body>
+<h1>Alert sequence findings</h1>
+<p class="sub">Windows reaching elevated severity or above, from the Wazuh lab at $(& $esc $ManagerAddress)</p>
+<p class="meta">Generated $($stamp.ToString('dddd d MMMM yyyy, HH:mm:ss')) &middot;
+$($findings.Count) finding$(if ($findings.Count -ne 1) { 's' }) across $([int]$sc.covers.windows) windows of $([int]$sc.windowSeconds) seconds, from $(& $esc $sc.covers.from)</p>
+
+<div class="aside">
+<p><b>Read this as triage ordering, not as a detection.</b> The model inside the severity score was
+fitted on eight public networks and has never been measured on this lab, because no public dataset
+contains this lab's own rules. It scored $('{0:N3}' -f [double]$m.ap) average precision against a
+$('{0:N3}' -f [double]$m.baseRate) base rate on networks it had not seen. A window appearing below is
+worth looking at before the ones that do not. It is not, on this evidence, an incident.</p>
+</div>
+
+<h2>Findings</h2>
+$($cards -join '')
+
+<h2>How severity is calculated</h2>
+<p>The model answers how unusual a window of alerts is, which is not the same as how bad it is.
+Severity is the composite that separates those, and the model is one term inside it. Six terms are
+read off the window, each squashed to a value between 0 and 1, then weighted and added. The total
+is multiplied once if the window contains both credential access and persistence, because that
+pairing is a chain rather than two events, and a chain is what single event rules cannot see.</p>
+<span class="formula">base  = 100 &times; sum of ( weight_i &times; norm_i )
+chain = 1 + $($sc.chainBonus) &times; sqrt(coverage)   when credential access and persistence both appear
+        1                          otherwise
+
+severity = min(100, base &times; chain)</span>
+<table>
+  <thead><tr><th>Term</th><th>What it reads</th><th class=n>Weight</th></tr></thead>
+  <tbody>$($weights -join '')</tbody>
+</table>
+<p>The weights are judgement rather than fitted parameters, and they live in one file so that
+disagreeing with them is an edit rather than an argument:
+<code>05-detection-modelling/scorer/score.py</code>. Bands are informational below 25, then low,
+elevated at 50, high at 70 and critical at 85.</p>
+
+<footer>
+Written by the lab dashboard from the poll on screen at the time, so this document and that screen
+agree. Method and measurements are in the repository under <code>05-detection-modelling/</code>,
+and the full modelling report is at <code>docs/Detection-Modelling-Report.pdf</code>.
+</footer>
+</body></html>
+"@
+
+    ConvertTo-LabPdf -Html $html -OutFile $out
+    return [ordered]@{ ok = $true; path = $out; count = $findings.Count }
+}
+
 function Get-LabCredentials {
     <#
     Everything needed to log in to the lab, gathered when asked for rather than on the poll.
@@ -1535,6 +1781,10 @@ while ($running -and $listener.IsListening) {
                 $reader.Close()
                 $message = Invoke-LabScenario -VmName $payload.vm -Scenario $payload.scenario -Mode $payload.mode
                 Write-Reply -Response $response -Body (([ordered]@{ ok = $true; message = $message }) | ConvertTo-Json -Compress)
+            }
+            '/api/export-findings' {
+                $result = Export-LabFindings
+                Write-Reply -Response $response -Body ($result | ConvertTo-Json -Depth 4 -Compress)
             }
             '/api/lock-autostart' {
                 $message = Lock-NoAutostart

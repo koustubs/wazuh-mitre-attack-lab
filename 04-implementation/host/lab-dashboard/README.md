@@ -92,18 +92,40 @@ A rule that exists and has never fired is the state worth noticing, and it is in
 view built from alerts alone, because nothing is there to see. Here it reads "never".
 
 **Alert sequence score.** The one panel showing a model rather than a rule. Every rule above
-judges a single event; this judges a run of them. Alerts are bucketed into five minute windows and
-each window is scored by the model from [step 5](../../../05-detection-modelling/README.md), with
-the score and the time under each bar, the rules that fired in the highest scoring completed
-window, and the model's provenance printed underneath.
+judges a single event; this judges a run of them. Alerts are bucketed into five minute windows,
+each window is scored, and the last twelve are drawn as a strip with the rules that fired in the
+worst one underneath.
+
+The number it leads with is not the model's. The model answers how unusual a window is, which is
+not how bad it is: forty level 3 alerts and one level 12 beside a new account can look alike to
+it. Severity is a 0 to 100 composite of six terms with the model as one of them, and the lab's
+own case, credential access followed by persistence, earns a multiplier because that pairing is a
+chain rather than two events. On the fabricated run used to test this, a quiet window scores 16,
+a brute force burst alone scores 29, and the same burst with an account creation beside it scores
+78. The rules in step 4 cannot tell those last two apart, which is the whole point of the panel.
+
+The weights are judgement rather than fitted parameters, and they live in one place,
+`05-detection-modelling/scorer/score.py`, so disagreeing with them is an edit rather than an
+argument. The info mark beside the title opens the method and the formula: hover to read it,
+click to pin it, click anywhere else to close it. It sits in the panel header rather than in the
+polled region so that a redraw every three seconds cannot close it while somebody is reading.
+
+A completed window reaching elevated, 50 or above, becomes a **finding**. Each one can be
+expanded to show every term, its raw reading, its normalised value, its weight and what it
+contributed, and then the rules that fired inside it with their ATT&CK ids. **Export findings**
+writes that to a PDF under `evidence/findings/`, built from the poll that was on screen at the
+time rather than from a fresh read, so the document and the screen it came from agree. It lands
+under `evidence/` because a finding carries account names and source addresses off a live
+endpoint, and everything there is gitignored.
 
 The newest bar is drawn hollow because that window is still filling. Its alert count is low for a
 reason that has nothing to do with what is happening, so its score is not comparable with the
 completed ones and the panel says so rather than drawing a dip that looks like an attack stopping.
 
-Bars are scaled against the model's cutoff, not against the tallest bar on screen. Auto-scaling
-was tried and rejected: on a quiet lab every window lands in a narrow band, and stretching that
-band to fill the panel turns a 0.03 spread into a dramatic climb, which is a picture of noise.
+Bars are severity on a fixed 0 to 100 scale, never scaled to the tallest bar on screen.
+Auto-scaling was tried and rejected: a severity is meant to mean the same thing on a quiet
+afternoon as during an incident, and stretching whatever is on screen to fill the panel makes a
+quiet hour look exactly like a bad one.
 
 What the panel is careful not to claim is the important part. The model was fitted on eight public
 networks, because no public dataset contains this lab's rules, and it has never been measured
