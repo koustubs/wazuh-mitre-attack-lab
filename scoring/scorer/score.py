@@ -406,8 +406,17 @@ def severity(alerts, probability, threshold, baseline=None, hour=None):
     # second term as well, scaling with the window's own volume so that a busy interval does
     # not sit permanently at 1.0 whatever the baseline says.
     den, meta = denominators(baseline, threshold)
+    # The model divisor is a multiple of the threshold, and a probability cannot exceed 1, so
+    # a multiple above 1 puts the top of that component out of reach. The deployed model's
+    # threshold is 0.85, which made the divisor 1.70 and capped the highest weighted component
+    # of the six at 0.59 of its range: the model could contribute at most 16 of 100 points no
+    # matter how certain it was, and the five components that know nothing about it carried
+    # the rest. Capping the divisor at 1 restores the intent, which is that a multiple of the
+    # threshold saturates the term, and leaves the arithmetic untouched wherever the threshold
+    # is low enough for the multiple to be reachable.
     norm = {
-        "model": _clamp(probability / (den["model"] * threshold)) if threshold > 0 else 0.0,
+        "model": (_clamp(probability / min(den["model"] * threshold, 1.0))
+                  if threshold > 0 else 0.0),
         "peak": _clamp((peak / den["peak"]) ** 1.2),
         "mass": _clamp(mass / den["mass"]),
         "velocity": _clamp(burst / max(den["velocity"], 0.5 * n)) if n else 0.0,

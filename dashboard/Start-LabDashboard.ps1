@@ -550,6 +550,10 @@ else:
             'episodes': _model.get('trainedOn', {}).get('episodes'),
             'caveat': _model.get('caveat'),
             'generated': _model.get('generated'),
+            # What the baseline layer itself was measured at, or nothing if it never was.
+            # The explainer says which, because a page that shows adaptive denominators and
+            # no measurement beside them invites the reader to assume one.
+            'adaptive': _model.get('adaptiveLayer'),
         },
     }
 

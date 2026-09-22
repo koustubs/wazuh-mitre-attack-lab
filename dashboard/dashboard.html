@@ -946,7 +946,33 @@ function adaptiveSection(s) {
     ${a.warmupWindows} completed windows behind it. A baseline built from ten minutes of data
     is worse than no baseline, so the working beside each finding says which mode it was in.
     The history lives on the manager at
-    <span class="mono">/var/lib/wazuh-lab/baseline.json</span>.</p>`;
+    <span class="mono">/var/lib/wazuh-lab/baseline.json</span>.</p>
+    ${adaptiveMeasurement(s)}`;
+}
+
+// Whether any of the above was ever measured, and what it came to. A page that shows measured
+// denominators with no measurement beside them invites the reader to assume there was one, so
+// the absence is printed as plainly as a result would be.
+function adaptiveMeasurement(s) {
+  const m = s.model && s.model.adaptive;
+  if (!m) {
+    return `<h4>Measured at</h4>
+      <p>Nothing. The layer above is reasoning, not evidence: no one has run
+      <span class="mono">evaluate_adaptive.py</span> against this model, so there is no number
+      here saying it helps. Read the severity as an ordering somebody argued for.</p>`;
+  }
+  return `
+    <h4>Measured at</h4>
+    <p>${esc(m.protocol || "")}. Adaptive severity reached
+    ${m.adaptiveAveragePrecision != null ? m.adaptiveAveragePrecision.toFixed(3) : "?"} average
+    precision against ${m.fixedAveragePrecision != null
+      ? m.fixedAveragePrecision.toFixed(3) : "?"} for the fixed constants, better on
+    ${m.foldsImproved} of ${m.folds} folds, a median gain of
+    ${m.deltaMedian != null ? (m.deltaMedian >= 0 ? "+" : "") + m.deltaMedian.toFixed(4) : "?"}.
+    The model probability alone reached
+    ${m.modelAveragePrecision != null ? m.modelAveragePrecision.toFixed(3) : "?"} on the same
+    windows, which is higher than either.</p>
+    <p>${esc(m.caveat || "")}</p>`;
 }
 
 // The explainer is written once and then left alone. Its content is the method rather than any

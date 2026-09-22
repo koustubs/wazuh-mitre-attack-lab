@@ -43,6 +43,10 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data", default="data/ait/episodes.jsonl")
     p.add_argument("--folds", default="data/ait/folds.jsonl")
+    p.add_argument("--adaptive", default="data/ait/adaptive.jsonl",
+                   help="evaluate_adaptive.py's folds; the baseline layer's measurement "
+                        "travels in the file the same way the model's own does. Missing and "
+                        "the block is left out, which the panel reports as unmeasured.")
     p.add_argument("--out", default="scorer/model.json")
     p.add_argument("--window", type=float, default=300.0,
                    help="the episode width the model was fitted at; the dashboard has to "
@@ -89,6 +93,18 @@ def main():
     gap = np.array([f["gru_ap"] for f in folds])
     rap = np.array([f["rule_ap"] for f in folds])
     base = np.array([f["base"] for f in folds])
+
+    # The baseline layer's own measurement, if it has been run. score.py divides four of its
+    # six denominators by the endpoint's history and applies two multipliers derived from it,
+    # and that is a change to the number an analyst reads, so it carries its own eight fold
+    # result rather than being asserted alongside the model's.
+    adaptive_path = pathlib.Path(a.adaptive)
+    if not adaptive_path.is_absolute():
+        adaptive_path = HERE / adaptive_path
+    adaptive_rows = []
+    if adaptive_path.exists():
+        adaptive_rows = [json.loads(l) for l in
+                         open(adaptive_path, encoding="utf-8-sig") if l.strip()]
 
     model = {
         "columns": SHAPE_COLUMNS,
@@ -138,6 +154,33 @@ def main():
         "generatedBy": "scoring/export-model.py",
     }
 
+    if adaptive_rows:
+        fx = np.array([r["fixed_ap"] for r in adaptive_rows])
+        ad = np.array([r["adaptive_ap"] for r in adaptive_rows])
+        mp = np.array([r["model_ap"] for r in adaptive_rows])
+        model["adaptiveLayer"] = {
+            "protocol": ("leave one network out, %d folds, each network one endpoint with "
+                         "one baseline" % len(adaptive_rows)),
+            "warmupWindows": int(pure.WARMUP_WINDOWS),
+            "modelAveragePrecision": round(float(mp.mean()), 4),
+            "fixedAveragePrecision": round(float(fx.mean()), 4),
+            "adaptiveAveragePrecision": round(float(ad.mean()), 4),
+            "adaptiveAveragePrecisionSd": round(float(ad.std()), 4),
+            "delta": round(float((ad - fx).mean()), 4),
+            "deltaMedian": round(float(np.median(ad - fx)), 4),
+            "foldsImproved": int((ad > fx).sum()),
+            "folds": len(adaptive_rows),
+            # Both of these are unflattering and both are load bearing, so they travel with
+            # the file rather than living in a README nobody opens beside the panel.
+            "caveat": ("Measured on AIT, where alerts carry no ATT&CK tactic and none of this "
+                       "lab's rule ids, so the chain multiplier is 1.0 on every window and the "
+                       "credential access into persistence pairing this lab was built around "
+                       "is untested here. On that data both severity arms rank labelled "
+                       "intrusion windows below the model probability they contain, and the "
+                       "baseline layer recovers part of that gap. The mean gain is carried by "
+                       "one fold of the eight; the median is the number to read."),
+        }
+
     out = pathlib.Path(a.out)
     if not out.is_absolute():
         out = HERE / out
@@ -165,6 +208,14 @@ def main():
           % (thr, len(valid), thr_f1))
     print("  leave one network out: average precision %.3f (sd %.3f) against a %.3f base rate"
           % (sap.mean(), sap.std(), base.mean()))
+    if adaptive_rows:
+        al = model["adaptiveLayer"]
+        print("  baseline layer: severity %.3f adaptive against %.3f fixed, %+.4f median, "
+              "better on %d of %d folds"
+              % (al["adaptiveAveragePrecision"], al["fixedAveragePrecision"],
+                 al["deltaMedian"], al["foldsImproved"], al["folds"]))
+    else:
+        print("  baseline layer: not measured; run evaluate_adaptive.py")
     print()
     # Features have to match exactly: they are the same arithmetic on the same inputs and any
     # difference at all is a bug. Probabilities are allowed a little room, because the file

@@ -130,6 +130,24 @@ def main():
              busy_values["velocity"], values["velocity"]))
 
     print()
+    print("The model term, against the threshold it is measured from:")
+
+    # The divisor is a multiple of the threshold, and a probability cannot exceed 1. The
+    # deployed threshold is 0.85, which put the top of the highest weighted component out of
+    # reach entirely: the model could contribute at most 16 of the 100 points however certain
+    # it was. Measured on AIT, capping the divisor lifted average precision on both arms.
+    def model_term(probability, threshold):
+        got = S.severity(window(5501, 3, 4), probability, threshold)
+        return [c for c in got["components"] if c["key"] == "model"][0]["value"]
+
+    check("a certain window saturates the model term at a high threshold",
+          model_term(1.0, 0.85) == 1.0, "value %.4f" % model_term(1.0, 0.85))
+    check("a low threshold still saturates at twice it",
+          abs(model_term(0.2, 0.1) - 1.0) < 1e-9, "p 0.20 against threshold 0.10")
+    check("and is proportional below that",
+          abs(model_term(0.1, 0.1) - 0.5) < 1e-9, "value %.4f" % model_term(0.1, 0.1))
+
+    print()
     print("Routine and novelty:")
 
     # Four occurrences of a rule this endpoint produces four times an hour, at that hour.
