@@ -219,8 +219,16 @@ rc, text = run(['sudo', '-n', '/usr/local/bin/lab-dashboard-indexer', 'alerts',
                 str(ALERT_SPAN_MINUTES)], 20)
 if rc == 0:
     try:
-        indexed = json.loads(text)
-        records = indexed.get('records') or []
+        parsed = json.loads(text)
+        # The key has to be checked, not just the exit code. A manager still carrying the
+        # older helper ignores the subcommand entirely and prints its cluster summary, which
+        # is valid JSON and exit 0 and has nothing to do with the question asked. Trusting the
+        # exit code alone would read that as a successful search that found no alerts, and the
+        # panel would go blank on every lab that has not had Enable-LabDashboard.ps1 re-run
+        # against it, which is the one case the fallback exists for.
+        if isinstance(parsed, dict) and 'records' in parsed:
+            indexed = parsed
+            records = indexed.get('records') or []
     except Exception:
         indexed = None
 

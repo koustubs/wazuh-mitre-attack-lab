@@ -114,8 +114,16 @@ def alerts():
     return out
 
 
-def run(script, records, tmp):
-    """Run the assembled script with its alert log pointed at a file we control."""
+def run(script, records, tmp, indexer=None, baseline=None):
+    """Run the assembled script with its alert log, and optionally its two manager side
+    helpers, pointed at things we control.
+
+    The helpers are the part of this path a workstation cannot reach: there is no sudo, no
+    indexer and no /var/lib/wazuh-lab. Substituting a stub for each is what makes the three
+    states a real manager can be in reachable here, and they behave differently enough to
+    matter: one with the current helpers, one still carrying the older ones, and one with
+    neither. Passing no stub is the third of those.
+    """
     path = tmp / "alerts.json"
     with io.open(path, "w", encoding="utf-8", newline="\n") as fh:
         for r in records:
@@ -123,12 +131,41 @@ def run(script, records, tmp):
     # Everything else the script reads (systemctl, sudo, ossec.log) is absent here and is
     # reported as a missing capability rather than raising, which is itself worth exercising.
     script = script.replace("/var/ossec/logs/alerts/alerts.json", str(path).replace("\\", "/"))
+    for helper, stub in (("indexer", indexer), ("baseline", baseline)):
+        if stub is None:
+            continue
+        script = script.replace("'sudo', '-n', '/usr/local/bin/lab-dashboard-%s'" % helper,
+                                "%r, %r" % (sys.executable, str(stub)))
     runner = tmp / "remote.py"
     io.open(runner, "w", encoding="utf-8", newline="\n").write(script)
     p = subprocess.run([sys.executable, str(runner)], capture_output=True, text=True)
     if p.returncode != 0:
         raise SystemExit("The manager script failed:\n%s" % p.stderr[-2500:])
     return json.loads(p.stdout)
+
+
+def stub(tmp, name, prints, records_stdin_to=None):
+    """A stand-in helper that prints a fixed document, and optionally keeps what it was sent."""
+    body = ["import io, sys",
+            "sys.stdout.write(%r)" % json.dumps(prints)]
+    if records_stdin_to is not None:
+        body.append("io.open(%r, 'w', encoding='utf-8').write(sys.stdin.read())"
+                    % str(records_stdin_to))
+    p = tmp / (name + "_stub.py")
+    io.open(p, "w", encoding="utf-8", newline="\n").write("\n".join(body) + "\n")
+    return p
+
+
+def warm_baseline(agent, windows=200):
+    """An endpoint with enough history to be past warm-up, in the helper's own state shape."""
+    hours = [windows // 24 + 1] * 24
+    return {"version": 1, "agents": {agent: {
+        "windows": windows, "lastWindow": 0, "hours": hours,
+        "samples": {k: [v + (0.5 if i % 2 else -0.5) for i in range(60)] for k, v in
+                    (("count", 20.0), ("peak", 3.0), ("mass", 1.0), ("burst", 8.0),
+                     ("distinct", 2.0), ("prob", 0.5))},
+        "rules": {"5501": {"count": 5000, "first": "", "last": "",
+                           "hours": [200] * 24}}}}}
 
 
 def main():
@@ -229,6 +266,89 @@ def main():
     check("no alerts is reported rather than failing",
           (out4.get("scoring") or {}).get("note") == "no-alerts",
           str(out4.get("scoring")))
+
+    print()
+    print("Where the alerts came from:")
+    check("with no helper at all, the log tail answers and says it has a ceiling",
+          (out.get("alertSource") or {}).get("from") == "log-tail"
+          and "truncated" in (out.get("alertSource") or {}),
+          str(out.get("alertSource")))
+
+    # A manager still carrying the older helper. It ignores the subcommand, prints its cluster
+    # summary and exits 0, so an exit code alone would read that as a search that found
+    # nothing and the panel would go blank on every lab that has not been re-enabled.
+    old = run(build_script(), records, tmp,
+              indexer=stub(tmp, "old_indexer", {"status": "green", "nodes": 1}))
+    check("an older helper's answer is recognised and not mistaken for an empty search",
+          (old.get("alertSource") or {}).get("from") == "log-tail"
+          and len(old["scoring"]["windows"]) == 4,
+          str(old.get("alertSource")))
+
+    fresh = stub(tmp, "new_indexer", {
+        "records": records, "total": len(records), "returned": len(records),
+        "truncated": False, "spanMinutes": 90,
+        "hourly": [], "coverage": {"5501": {"count": 26, "timestamp": records[0]["timestamp"],
+                                            "level": 3}},
+        "attack": [{"tech": "Password Guessing", "count": 8}]})
+    viaindex = run(build_script(), [], tmp, indexer=fresh)
+    check("the indexer answers, with an empty alert log beside it",
+          (viaindex.get("alertSource") or {}).get("from") == "indexer"
+          and len(viaindex["scoring"]["windows"]) == 4,
+          str((viaindex.get("alertSource") or {}).get("from")))
+    check("the rule tallies come from the aggregation rather than the documents",
+          viaindex["coverage"].get("5501", {}).get("count") == 26,
+          str(viaindex["coverage"].get("5501")))
+
+    cut = stub(tmp, "cut_indexer", {
+        "records": records, "total": 9999, "returned": len(records), "truncated": True,
+        "spanMinutes": 90})
+    short = run(build_script(), [], tmp, indexer=cut)
+    check("a fetch that hit its ceiling says so instead of looking like a quiet hour",
+          (short["scoring"]["source"] or {}).get("truncated") is True
+          and short["scoring"]["source"]["total"] == 9999)
+
+    print()
+    print("The baseline, through the assembled script:")
+    seen = tmp / "folded.json"
+    warm = stub(tmp, "baseline", warm_baseline("wazuh-linux"), records_stdin_to=seen)
+    adapted = run(build_script(), records, tmp, baseline=warm)
+    worst = adapted["scoring"]["top"]["working"]
+    check("a warm endpoint is scored against its own baseline",
+          worst["baselineMode"] == "baseline" and worst["baselineWindows"] == 200,
+          "%s, %d windows" % (worst["baselineMode"], worst["baselineWindows"]))
+    check("the denominators travel with the score",
+          all("denominator" in c and "source" in c for c in worst["components"])
+          and any(c["source"] == "measured" for c in worst["components"]))
+    check("the explainer is sent the constants behind them",
+          bool(adapted["scoring"].get("adaptive", {}).get("fixed")))
+    check("the endpoint the severity belongs to is named",
+          adapted["scoring"]["top"]["agent"] == "wazuh-linux")
+    check("four windows is fewer than one screen, so nothing is folded yet",
+          json.loads(io.open(seen, encoding="utf-8").read())["observations"] == []
+          and adapted["scoring"]["baseline"]["folded"] == 0)
+
+    # Sixteen windows of quiet traffic, so four of them have scrolled off the chart.
+    long_run = []
+    stamp = datetime.datetime(2026, 9, 21, 6, 0, 0)
+    for w in range(16):
+        for i in range(5):
+            t = stamp + datetime.timedelta(seconds=w * 300 + i * 20)
+            long_run.append({
+                "timestamp": t.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "+0000",
+                "agent": {"name": "wazuh-linux"},
+                "rule": {"id": "5501", "level": 3, "description": "PAM: login session opened",
+                         "mitre": {}}})
+    rolled = run(build_script(), long_run, tmp, baseline=warm)
+    folded = json.loads(io.open(seen, encoding="utf-8").read())["observations"]
+    check("only windows that have scrolled off the chart are folded",
+          len(folded) == 4 and rolled["scoring"]["baseline"]["folded"] == 4,
+          "%d of 16 windows" % len(folded))
+    check("a folded observation carries the endpoint, the hour and its rule counts",
+          all(o["agent"] == "wazuh-linux" and o["rules"] == {"5501": 5}
+              and 0 <= o["hour"] <= 23 for o in folded))
+    check("no window still on the chart was folded",
+          max(o["epoch"] for o in folded)
+          < min(w["epoch"] for w in rolled["scoring"]["windows"]))
 
     if a.payload:
         dest = pathlib.Path(a.payload)
