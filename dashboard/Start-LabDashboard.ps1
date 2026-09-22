@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 A small local control panel for the three Wazuh lab VMs.
 
@@ -208,10 +208,29 @@ else:
 # down still shows its alerts, and a manager that has not had Enable-LabDashboard.ps1 re-run
 # against it still works rather than showing an empty panel and no reason for it.
 #
-# Eighteen windows at the shipped five minute width. Twelve are displayed and scored; the six
-# behind them are what the baseline is folded from, so no window on the page has ever been
-# folded into the baseline it is being scored against.
-ALERT_SPAN_MINUTES = 90
+# Eighteen windows at the shipped five minute width. Twelve are displayed and scored; anything
+# behind them is what the baseline is folded from, so no window on the page has ever been folded
+# into the baseline it is being scored against.
+#
+# That arithmetic assumed every window in the span holds an alert. On a quiet lab almost none of
+# them do: ninety minutes here produced seven populated windows, not eighteen, so the twelve on
+# the page were all of them, the fold set was empty on every cycle, and the baseline sat at zero
+# windows for as long as the dashboard ran. Nothing reported a fault, because nothing was at
+# fault; the rule was simply unreachable below a certain alert rate, which is the rate this lab
+# runs at.
+#
+# Six hours rather than ninety minutes, and the page still shows the last twelve windows, so
+# nothing about what is displayed changes. What changes is that there are windows behind the
+# twelve for the baseline to fold. Measured on this lab: ninety minutes holds 221 alerts in 8
+# populated windows, six hours holds 238 in 21. Seventeen more alerts buys thirteen more windows,
+# because the alerts are clustered and the empty stretches between them cost nothing to ask for.
+ALERT_SPAN_MINUTES = 360
+# A day, for the one fetch that fills an empty baseline rather than growing one. Only issued when
+# an endpoint has no baseline at all, which is the only case where it can help: the helper folds
+# a window only when it is newer than the newest already folded, so a second pass over the same
+# history is rejected window by window and returns nothing. Not a throttle on a useful query, a
+# statement of when the query is useful.
+WARM_SPAN_MINUTES = 1440
 alerts_path = '/var/ossec/logs/alerts/alerts.json'
 records = []
 indexed = None
@@ -353,28 +372,38 @@ else:
     width = float(_model.get('windowSeconds') or 300.0)
     # Anchored on the clock rather than on the first alert, so a window boundary is a round
     # five minutes and two polls a second apart describe the same window rather than sliding.
-    buckets = {}
-    for a in records:
-        t = _epoch(a.get('timestamp') or '')
-        if t is None:
-            continue
-        rule = a.get('rule', {}) or {}
-        try:
-            rid = int(rule.get('id'))
-        except (TypeError, ValueError):
-            continue
-        lo = width * math.floor(t / width)
-        mitre = rule.get('mitre', {}) or {}
-        buckets.setdefault(lo, []).append({
-            'at': t - lo, 'ruleId': rid, 'level': int(rule.get('level') or 0),
-            # Which endpoint produced it. Dropped here until now, which meant credential
-            # access on one machine and a new account on another earned the same chain
-            # multiplier as both happening on one machine, and meant there was nothing for a
-            # per endpoint baseline to be a baseline of.
-            'agent': (a.get('agent') or {}).get('name') or '',
-            'desc': (rule.get('description') or '')[:70],
-            'tactics': mitre.get('tactic') or [],
-            'techniques': mitre.get('id') or mitre.get('technique') or []})
+    def _bucket(rows):
+        """Alerts grouped into epoch aligned windows.
+
+        Called twice: once for the page, once for the longer span the baseline warms from.
+        One function rather than two loops, because a warm window bucketed even slightly
+        differently from a live one is a baseline for something other than what is scored.
+        """
+        grouped = {}
+        for a in rows:
+            t = _epoch(a.get('timestamp') or '')
+            if t is None:
+                continue
+            rule = a.get('rule', {}) or {}
+            try:
+                rid = int(rule.get('id'))
+            except (TypeError, ValueError):
+                continue
+            lo = width * math.floor(t / width)
+            mitre = rule.get('mitre', {}) or {}
+            grouped.setdefault(lo, []).append({
+                'at': t - lo, 'ruleId': rid, 'level': int(rule.get('level') or 0),
+                # Which endpoint produced it. Dropped here until now, which meant credential
+                # access on one machine and a new account on another earned the same chain
+                # multiplier as both happening on one machine, and meant there was nothing for
+                # a per endpoint baseline to be a baseline of.
+                'agent': (a.get('agent') or {}).get('name') or '',
+                'desc': (rule.get('description') or '')[:70],
+                'tactics': mitre.get('tactic') or [],
+                'techniques': mitre.get('id') or mitre.get('technique') or []})
+        return grouped
+
+    buckets = _bucket(records)
 
     # Which window is still filling. Taken from the newest record rather than from the
     # clock, because the manager's idea of now and the timestamps on its own alerts have
@@ -436,18 +465,94 @@ else:
         for name, share in _by_agent(buckets[lo]).items():
             observations.append(_observation(name, lo, share))
 
-    # One call, which prints the baseline as it stood before these observations and then folds
-    # them in. Missing, or refused, and every denominator stays at its fixed value; the panel
-    # reports which mode it is in rather than letting a reader assume the other one.
-    baselines, baseline_note = {}, 'unavailable'
-    rc, text = run(['sudo', '-n', '/usr/local/bin/lab-dashboard-baseline'], 20,
-                   json.dumps({'observations': observations}))
-    if rc == 0:
+    def _fold(obs):
+        """Hand observations to the baseline and get back the baseline as it stood before
+        them. An empty list reads without folding, which is how warmth is checked.
+
+        None means the helper could not be run at all, False means it answered something that
+        would not parse. The two are different faults and the panel names them differently.
+        """
+        rc_f, text_f = run(['sudo', '-n', '/usr/local/bin/lab-dashboard-baseline'], 20,
+                           json.dumps({'observations': obs}))
+        if rc_f != 0:
+            return None
         try:
-            baselines = (json.loads(text) or {}).get('agents') or {}
-            baseline_note = 'ok'
+            return (json.loads(text_f) or {}).get('agents') or {}
         except Exception:
-            baselines, baseline_note = {}, 'unreadable'
+            return False
+
+    # Read before folding anything. Whether an endpoint is still short of its warm-up is what
+    # decides whether a day of history is worth asking the indexer for, and that cannot be known
+    # from a call that has already folded this cycle's windows into the answer.
+    warm_folded = 0
+    opening = _fold([])
+    if opening is None:
+        baselines, baseline_note = {}, 'unavailable'
+    elif opening is False:
+        baselines, baseline_note = {}, 'unreadable'
+    else:
+        baseline_note = 'ok'
+        # Only endpoints this lab is actually producing alerts for. A baseline for a machine
+        # that has been off for a week is not worth a query. Read off the buckets rather than
+        # off records: the raw rows carry agent as the indexer's object, and it is the bucketing
+        # that flattens it to the name everything downstream keys by.
+        live = set(x.get('agent') or '' for al in buckets.values() for x in al)
+        short = [name for name in live if name
+                 and int((opening.get(name) or {}).get('windows') or 0) == 0]
+        if short:
+            rc_w, text_w = run(['sudo', '-n', '/usr/local/bin/lab-dashboard-indexer',
+                                'alerts', str(WARM_SPAN_MINUTES)], 45)
+            warm_rows = []
+            if rc_w == 0:
+                try:
+                    parsed_w = json.loads(text_w)
+                    if isinstance(parsed_w, dict) and 'records' in parsed_w:
+                        warm_rows = parsed_w.get('records') or []
+                        # A fetch that reached the document ceiling kept the newest and dropped
+                        # the oldest, so its earliest window is a fragment rather than a window.
+                        # Folding a fragment teaches the baseline that the endpoint is quieter
+                        # than it is, which is the direction that makes real activity look
+                        # normal, so the fragment goes.
+                        if parsed_w.get('truncated') and warm_rows:
+                            stamps = [s for s in (_epoch(r.get('timestamp') or '')
+                                                  for r in warm_rows) if s is not None]
+                            if stamps:
+                                edge = width * math.floor(min(stamps) / width) + width
+                                warm_rows = [r for r in warm_rows
+                                             if (_epoch(r.get('timestamp') or '') or 0) >= edge]
+                except Exception:
+                    warm_rows = []
+            if warm_rows:
+                on_page = set(shown)
+                warm_obs = []
+                warm_buckets = _bucket(warm_rows)
+                for lo in sorted(warm_buckets):
+                    # Never a window the page is about to score, and never the one still
+                    # filling. The warm span overlaps the page span by ninety minutes, so
+                    # without this the twelve on the page would be folded into the baseline
+                    # they are scored against.
+                    if lo in on_page or lo == current:
+                        continue
+                    for name, share in _by_agent(warm_buckets[lo]).items():
+                        warm_obs.append(_observation(name, lo, share))
+                if warm_obs:
+                    _fold(warm_obs)
+
+        # The page's own fold set, last, so the value scored against carries the warm history
+        # and not this cycle's windows. The helper skips any window it has already seen, so an
+        # observation the warm pass folded is not counted twice.
+        settled = _fold(observations)
+        if isinstance(settled, dict):
+            baselines = settled
+            # What the warm pass actually folded, which is the difference between the state
+            # before it and the state after. Counting the observations handed over instead
+            # would report work the helper rejected as work it did, and every window of a
+            # repeat pass is rejected.
+            def _total(state):
+                return sum(int((v or {}).get('windows') or 0) for v in (state or {}).values())
+            warm_folded = max(0, _total(settled) - _total(opening))
+        else:
+            baselines = opening
 
     wins = []
     for lo in shown:
@@ -537,6 +642,11 @@ else:
         'baseline': {
             'note': baseline_note,
             'folded': len(observations),
+            # How many windows the warm pass folded, which is zero on every cycle after the
+            # baseline reaches its warm-up. A panel that reports this is a panel where "still
+            # warming" can be told apart from "warming and getting nowhere".
+            'warmed': warm_folded,
+            'need': WARMUP_WINDOWS,
             'windows': dict((k, int((v or {}).get('windows') or 0))
                             for k, v in baselines.items()),
         },
