@@ -122,28 +122,139 @@ fi
 if [ "$ROLE" = "manager" ]; then
   cat > /usr/local/bin/lab-dashboard-indexer <<'INDEXER'
 #!/usr/bin/env python3
-# Cluster health, alert volume and retention policy state, as one JSON document.
+# The indexer, read two ways: a summary of its own health, and the alerts it holds.
+#
+#     lab-dashboard-indexer                cluster health, alert volume, retention policy
+#     lab-dashboard-indexer alerts 90      the last 90 minutes of alerts, plus twelve hours
+#                                          of hourly counts, rule totals and technique totals
 #
 # Authenticates with the indexer's admin certificate rather than the admin password. Querying
 # does not need the password, so this does not go near the install log, and the certificate
 # never leaves this machine. Handing the password to somebody who asks for it is a separate
 # job, done by lab-dashboard-creds.
-import json, subprocess
+#
+# The second form is why the dashboard no longer reads the tail of alerts.json. That read took
+# the last 400 KB and the newest 800 lines and treated whatever it got as the whole picture, so
+# a busy window quietly lost its oldest records and was scored as though it were complete, and
+# every hour older than the tail was drawn on the rate chart as quieter than it had been. Here
+# the range is explicit, the counts come from aggregations that see every matching document,
+# and a document fetch that does reach its own ceiling says so rather than pretending.
+#
+# No query text is taken from the caller. Two subcommands and a whole number of minutes are the
+# entire surface and every request body is built here, so a caller who got past sudoers still
+# cannot turn this into a general client for the indexer.
+import json, subprocess, sys
 
 CERTS = '/etc/wazuh-indexer/certs'
+BASE = 'https://127.0.0.1:9200'
+# The most documents one fetch returns. A busy five minute window in this lab is a few hundred
+# alerts, so this is three orders of magnitude of headroom, and saying plainly when it has been
+# reached is worth more than a larger number would be.
+MAX_DOCS = 5000
+FIELDS = ['timestamp', 'agent.name', 'rule.id', 'rule.level', 'rule.description',
+          'rule.mitre.id', 'rule.mitre.tactic', 'rule.mitre.technique']
 
-def query(path):
+
+def query(path, body=None):
+    cmd = ['curl', '-s', '--max-time', '10', '-k',
+           '--cert', CERTS + '/admin.pem', '--key', CERTS + '/admin-key.pem', BASE + path]
+    if body is not None:
+        # Through stdin, not on the command line, for the same reason the admin password is
+        # never an argument to anything here.
+        cmd += ['-H', 'Content-Type: application/json', '--data-binary', '@-']
     try:
-        r = subprocess.run(
-            ['curl', '-s', '--max-time', '8', '-k',
-             '--cert', CERTS + '/admin.pem', '--key', CERTS + '/admin-key.pem',
-             'https://127.0.0.1:9200' + path],
-            capture_output=True, text=True, timeout=12)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=14,
+                           input=(json.dumps(body) if body is not None else None))
         if r.returncode != 0:
             return None
         return json.loads(r.stdout)
     except Exception:
         return None
+
+
+def alerts(minutes):
+    """The recent alerts, and the twelve hour tallies the panels are drawn from."""
+    out = {'records': [], 'total': 0, 'returned': 0, 'truncated': False, 'spanMinutes': minutes}
+
+    # Newest first and then reversed, so a fetch that does reach MAX_DOCS loses its oldest
+    # records rather than its newest. The scoring reads the recent end of the range.
+    found = query('/wazuh-alerts-*/_search', {
+        'size': MAX_DOCS,
+        'track_total_hits': True,
+        'sort': [{'timestamp': {'order': 'desc'}}],
+        '_source': FIELDS,
+        'query': {'range': {'timestamp': {'gte': 'now-%dm' % minutes}}},
+    })
+    if not isinstance(found, dict) or 'hits' not in found:
+        return None
+    hits = found['hits'].get('hits') or []
+    total = found['hits'].get('total')
+    if isinstance(total, dict):
+        total = total.get('value')
+    out['records'] = [h.get('_source') or {} for h in hits][::-1]
+    out['returned'] = len(hits)
+    out['total'] = int(total if total is not None else len(hits))
+    out['truncated'] = out['total'] > out['returned']
+
+    # Aggregations, over a wider range than the documents. A terms aggregation counts every
+    # matching document whatever the fetch returned, which is the whole reason these three are
+    # not computed from the list above.
+    #
+    # The last seen time comes from the document rather than from a max aggregation, because
+    # an aggregation reports it in UTC and the alert carries the manager's own offset. The
+    # panel prints that string, so taking the aggregation's would move every timestamp on the
+    # page by the offset.
+    agg = query('/wazuh-alerts-*/_search', {
+        'size': 0,
+        'query': {'range': {'timestamp': {'gte': 'now-12h'}}},
+        'aggs': {
+            'hourly': {'date_histogram': {'field': 'timestamp', 'calendar_interval': 'hour',
+                                          'min_doc_count': 0}},
+            'rules': {'terms': {'field': 'rule.id', 'size': 500},
+                      'aggs': {'newest': {'top_hits': {
+                          'size': 1, '_source': ['timestamp', 'rule.level'],
+                          'sort': [{'timestamp': {'order': 'desc'}}]}}}},
+            'techniques': {'terms': {'field': 'rule.mitre.technique', 'size': 60}},
+        },
+    })
+    buckets = (agg or {}).get('aggregations') or {}
+    if buckets:
+        # Epoch seconds rather than the formatted key, so the caller places each bucket in its
+        # own idea of the hour instead of inheriting the indexer's.
+        out['hourly'] = [{'at': int(b.get('key', 0)) // 1000, 'count': int(b.get('doc_count', 0))}
+                         for b in (buckets.get('hourly') or {}).get('buckets') or []]
+        coverage = {}
+        for b in (buckets.get('rules') or {}).get('buckets') or []:
+            top = ((b.get('newest') or {}).get('hits') or {}).get('hits') or []
+            source = (top[0].get('_source') if top else {}) or {}
+            coverage[str(b.get('key'))] = {
+                'count': int(b.get('doc_count', 0)),
+                'timestamp': source.get('timestamp') or '',
+                'level': (source.get('rule') or {}).get('level', ''),
+            }
+        out['coverage'] = coverage
+        out['attack'] = [{'tech': str(b.get('key')), 'count': int(b.get('doc_count', 0))}
+                         for b in (buckets.get('techniques') or {}).get('buckets') or []]
+    return out
+
+
+if len(sys.argv) > 1:
+    if sys.argv[1] != 'alerts':
+        sys.stderr.write('Usage: lab-dashboard-indexer [alerts <minutes>]\n')
+        sys.exit(2)
+    try:
+        span = int(sys.argv[2]) if len(sys.argv) > 2 else 90
+    except ValueError:
+        span = 0
+    if not 1 <= span <= 1440:
+        sys.stderr.write('minutes must be a whole number from 1 to 1440\n')
+        sys.exit(2)
+    answer = alerts(span)
+    if answer is None:
+        sys.stderr.write('The indexer did not answer the search.\n')
+        sys.exit(1)
+    print(json.dumps(answer))
+    sys.exit(0)
 
 out = {}
 
@@ -218,6 +329,147 @@ CREDS
   # than an answer, and there is no reason for it to be runnable by anyone else.
   chmod 0750 /usr/local/bin/lab-dashboard-creds
   echo "  installed /usr/local/bin/lab-dashboard-creds"
+
+  mkdir -p /var/lib/wazuh-lab
+  chmod 0750 /var/lib/wazuh-lab
+  cat > /usr/local/bin/lab-dashboard-baseline <<'BASELINE'
+#!/usr/bin/env python3
+# What each endpoint normally does, so that the scoring can divide by it.
+#
+# Reads a JSON document of completed window observations on stdin, folds in any it has not
+# already seen, and prints the baseline as it stood BEFORE that fold. Before, deliberately: a
+# window must not be baselined against itself, and the caller is scoring the same windows it
+# is handing over.
+#
+#     echo '{"observations": [ ... ]}' | lab-dashboard-baseline
+#     lab-dashboard-baseline < /dev/null              print what is there, fold nothing
+#
+# It lives on the manager rather than on the Windows host for two reasons. It is where the
+# alerts are, so nothing has to be shipped to build it; and it survives the dashboard being
+# closed and the host being rebooted, which a TTL cache in a PowerShell process does not.
+#
+# One observation is one endpoint's share of one completed window:
+#
+#     agent  epoch  hour  count  peak  mass  burst  distinct  prob  at  rules{id: n}
+#
+# The caller computes those from the same code that scores the window, so the baseline cannot
+# drift away from the thing it is a baseline for. Nothing is recomputed here.
+import json, os, sys, tempfile
+
+STATE = '/var/lib/wazuh-lab/baseline.json'
+# Roughly 24 hours of five minute windows. Long enough that one bad afternoon is a minority of
+# the sample, short enough that a machine whose job changed is not held to what it used to do.
+SAMPLE_LIMIT = 288
+# A ceiling on how many rules are remembered per endpoint, so a noisy ruleset cannot grow this
+# file without bound. The least recently seen go first.
+RULE_LIMIT = 400
+METRICS = ('count', 'peak', 'mass', 'burst', 'distinct', 'prob')
+# More than any honest caller sends, and a bound on what a broken one can.
+MAX_INPUT = 2000000
+
+
+def blank():
+    return {'windows': 0, 'lastWindow': 0, 'hours': [0] * 24, 'rules': {},
+            'samples': dict((m, []) for m in METRICS)}
+
+
+def read_state():
+    try:
+        with open(STATE, encoding='utf-8') as handle:
+            state = json.load(handle)
+        if isinstance(state, dict) and isinstance(state.get('agents'), dict):
+            return state
+    except Exception:
+        pass
+    return {'version': 1, 'agents': {}}
+
+
+def write_state(state):
+    # Atomically, into the same directory, so a baseline is never half written. Losing the
+    # last fold to a crash costs one window; a truncated file costs every window ever folded.
+    directory = os.path.dirname(STATE)
+    handle, temporary = tempfile.mkstemp(dir=directory)
+    try:
+        with os.fdopen(handle, 'w', encoding='utf-8') as out:
+            json.dump(state, out, separators=(',', ':'))
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, STATE)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def fold(agent, observation):
+    epoch = int(observation.get('epoch') or 0)
+    if epoch <= int(agent.get('lastWindow') or 0):
+        return False
+    hour = int(observation.get('hour') or 0) % 24
+
+    samples = agent.setdefault('samples', dict((m, []) for m in METRICS))
+    for metric in METRICS:
+        series = samples.setdefault(metric, [])
+        series.append(round(float(observation.get(metric) or 0.0), 4))
+        if len(series) > SAMPLE_LIMIT:
+            del series[:len(series) - SAMPLE_LIMIT]
+
+    hours = agent.setdefault('hours', [0] * 24)
+    while len(hours) < 24:
+        hours.append(0)
+    hours[hour] += 1
+
+    stamp = str(observation.get('at') or '')
+    rules = agent.setdefault('rules', {})
+    for rid, occurrences in (observation.get('rules') or {}).items():
+        entry = rules.setdefault(str(rid), {'count': 0, 'first': stamp, 'last': stamp,
+                                            'hours': [0] * 24})
+        while len(entry['hours']) < 24:
+            entry['hours'].append(0)
+        entry['count'] += int(occurrences or 0)
+        entry['hours'][hour] += int(occurrences or 0)
+        if stamp:
+            entry['last'] = stamp
+            if not entry.get('first'):
+                entry['first'] = stamp
+    if len(rules) > RULE_LIMIT:
+        oldest = sorted(rules, key=lambda k: rules[k].get('last') or '')
+        for rid in oldest[:len(rules) - RULE_LIMIT]:
+            del rules[rid]
+
+    agent['windows'] = int(agent.get('windows') or 0) + 1
+    agent['lastWindow'] = epoch
+    return True
+
+
+state = read_state()
+# Printed before anything is folded, which is the whole contract of this script.
+print(json.dumps(state))
+
+raw = ''
+if not sys.stdin.isatty():
+    raw = sys.stdin.read(MAX_INPUT)
+if not raw.strip():
+    sys.exit(0)
+try:
+    incoming = json.loads(raw).get('observations') or []
+except Exception:
+    sys.stderr.write('stdin was not a JSON document with an observations list\n')
+    sys.exit(2)
+
+changed = False
+for observation in sorted(incoming, key=lambda o: int(o.get('epoch') or 0)):
+    name = str(observation.get('agent') or '')
+    if not name:
+        continue
+    if fold(state['agents'].setdefault(name, blank()), observation):
+        changed = True
+if changed:
+    write_state(state)
+BASELINE
+  chmod 0755 /usr/local/bin/lab-dashboard-baseline
+  echo "  installed /usr/local/bin/lab-dashboard-baseline"
 fi
 
 if [ "$ROLE" = "endpoint" ] && [ -f /tmp/lab-invoke-scenario.sh ]; then
@@ -283,7 +535,16 @@ TMP=$(mktemp)
   done
   printf '\n'
   if [ "$ROLE" = "manager" ]; then
-    printf 'Cmnd_Alias WAZUH_LAB_READ = /var/ossec/bin/agent_control -l, /usr/local/bin/lab-dashboard-indexer, /usr/local/bin/lab-dashboard-creds\n'
+    # Argument forms, not bare paths. A command written without arguments in sudoers may be run
+    # with any arguments at all, which was tolerable while the indexer helper took none and is
+    # not now that it takes a subcommand. The "" spec means exactly no arguments, so the only
+    # thing a caller can vary is the minute count on the search, and that is checked by the
+    # script as well.
+    printf 'Cmnd_Alias WAZUH_LAB_READ = /var/ossec/bin/agent_control -l'
+    printf ', /usr/local/bin/lab-dashboard-indexer ""'
+    printf ', /usr/local/bin/lab-dashboard-indexer alerts *'
+    printf ', /usr/local/bin/lab-dashboard-baseline ""'
+    printf ', /usr/local/bin/lab-dashboard-creds ""\n'
     printf '%s ALL=(root) NOPASSWD: WAZUH_LAB_SVC, WAZUH_LAB_READ\n' "$SUDO_USER"
   elif [ -x /usr/local/bin/lab-scenario ]; then
     # Six exact invocations, arguments included. Not a wildcard: these scripts deliberately
@@ -377,12 +638,14 @@ Write-Host ''
 Write-Host 'Checking what the manager will now answer...'
 $check = (Invoke-Native -Exe 'ssh.exe' -Arguments ($sshCommon + @(
     ("{0}@{1}" -f $User, $ManagerAddress),
-    'sudo -n /var/ossec/bin/agent_control -l >/dev/null 2>&1 && echo agents_ok; sudo -n /usr/local/bin/lab-dashboard-indexer >/dev/null 2>&1 && echo indexer_ok; test -r /var/ossec/logs/alerts/alerts.json && echo alerts_ok'
+    'sudo -n /var/ossec/bin/agent_control -l >/dev/null 2>&1 && echo agents_ok; sudo -n /usr/local/bin/lab-dashboard-indexer >/dev/null 2>&1 && echo indexer_ok; sudo -n /usr/local/bin/lab-dashboard-indexer alerts 5 >/dev/null 2>&1 && echo search_ok; sudo -n /usr/local/bin/lab-dashboard-baseline </dev/null >/dev/null 2>&1 && echo baseline_ok; test -r /var/ossec/logs/alerts/alerts.json && echo alerts_ok'
 ))).Output
 foreach ($capability in @(
-    @{ Token = 'agents_ok';  Text = 'agent state' },
-    @{ Token = 'indexer_ok'; Text = 'indexer summary' },
-    @{ Token = 'alerts_ok';  Text = 'alert log' })) {
+    @{ Token = 'agents_ok';   Text = 'agent state' },
+    @{ Token = 'indexer_ok';  Text = 'indexer summary' },
+    @{ Token = 'search_ok';   Text = 'alert search' },
+    @{ Token = 'baseline_ok'; Text = 'per endpoint baseline' },
+    @{ Token = 'alerts_ok';   Text = 'alert log' })) {
     if ($check -match $capability.Token) { Write-Host ("  {0}: yes" -f $capability.Text) }
     else { Write-Host ("  {0}: not yet" -f $capability.Text) }
 }

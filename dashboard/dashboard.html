@@ -754,9 +754,42 @@ function renderScoring(data) {
       ${m.ap != null ? m.ap.toFixed(3) : "?"} average precision against a
       ${m.baseRate != null ? m.baseRate.toFixed(3) : "?"} base rate under ${esc(m.protocol || "")}.
       <br>${esc(m.caveat || "")}
+      <br>${sourceLine(s)}
     </div>`;
 
   renderFindings(findings);
+}
+
+// Where the alerts came from, whether all of them arrived, and how much history the baseline
+// has. All three used to be invisible, and the first two are the difference between a quiet
+// hour and a read that stopped early. A panel that cannot tell you which one it is showing is
+// a panel you cannot act on.
+function sourceLine(s) {
+  const src = s.source || {};
+  const base = s.baseline || {};
+  const parts = [];
+  if (src.from === "indexer") {
+    parts.push(`Read from the indexer over the last ${src.spanMinutes} minutes,
+      ${src.total} alerts` + (src.truncated
+        ? `, of which only the newest ${src.returned} were fetched: the windows at the old end
+           of that range are incomplete`
+        : `, all of them fetched`));
+  } else if (src.from === "log-tail") {
+    parts.push(`Read from the tail of alerts.json, ${src.returned} records` + (src.truncated
+      ? `, which hit the read's own ceiling, so the oldest windows here are missing alerts`
+      : ``) + `. The indexer would answer this without a ceiling: run
+      <span class="mono">dashboard\\Enable-LabDashboard.ps1</span> against the manager.`);
+  }
+  const counts = Object.entries(base.windows || {});
+  if (base.note !== "ok") {
+    parts.push(`No baseline is being kept, so every denominator is the fixed one.`);
+  } else if (!counts.length) {
+    parts.push(`The baseline is empty. It fills from windows once they scroll off this chart.`);
+  } else {
+    parts.push(`Baseline: ` + counts.map(([k, v]) =>
+      `${esc(k)} ${v} window${v === 1 ? "" : "s"}`).join(", ") + `.`);
+  }
+  return parts.join(" ");
 }
 
 // Redrawn only when it has actually changed. The page polls every three seconds and this list
@@ -785,13 +818,48 @@ function renderFindings(findings) {
         <td class="n">${esc(r.tech || "")}</td>
         <td class="n">${r.count}</td></tr>`).join("");
 
+    // Divided by, and where that divisor came from. The manager ships both, so this cannot
+    // drift from what the score was actually built with, which is the same reason the weights
+    // are shipped rather than written here.
     const parts = wk.components.map(c => `<tr>
         <td class="mono">${esc(c.key)}</td>
         <td>${esc(c.label)}<span class="meter"><i style="width:${Math.round(100 * c.value)}%"></i></span></td>
         <td class="n">${c.raw}</td>
+        <td class="n">${c.denominator == null ? "&mdash;" : c.denominator}${
+          c.source === "measured" ? `<span class="faint" title="derived from this endpoint's own history"> m</span>` : ""}</td>
         <td class="n">${c.value.toFixed(3)}</td>
         <td class="n">&times;${c.weight.toFixed(2)}</td>
         <td class="n">${c.contribution.toFixed(2)}</td></tr>`).join("");
+
+    // The three multipliers, written out in the order they are applied. A multiplier that is
+    // exactly 1.0 still gets a line, because "no discount was applied here" is a thing the
+    // reader needs to know and an omitted row does not say it.
+    const mult = [
+      wk.chained
+        ? `&times;${wk.chain.toFixed(4)} chain, because credential access and persistence both
+           appear on this endpoint`
+        : `&times;1 no chain: this window shows one stage on any single endpoint`,
+      wk.novelty > 1
+        ? `&times;${wk.novelty.toFixed(4)} novelty, on
+           ${Math.round(100 * wk.novelShare)}% of the alerts being signatures this endpoint has
+           not produced before`
+        : null,
+      wk.routine < 1
+        ? `&times;${wk.routine.toFixed(4)} routine, on
+           ${Math.round(100 * wk.routineShare)}% of the alerts being this endpoint's own daily
+           traffic at this hour`
+        : (wk.baselineMode === "baseline" && wk.chained
+            ? `&times;1 no routine discount: a chain is never routine`
+            : null),
+    ].filter(Boolean).join("<br>");
+
+    const mode = wk.baselineMode === "baseline"
+      ? `Scored against ${esc(wk.agent || "this endpoint")}'s own baseline,
+         ${wk.baselineWindows} windows deep.`
+      : wk.baselineMode === "warming"
+        ? `Fixed denominators: ${esc(wk.agent || "this endpoint")} has
+           ${wk.baselineWindows} of the ${wk.baselineNeeds} windows a baseline needs.`
+        : `Fixed denominators: no baseline is being kept.`;
 
     return `<div class="finding ${esc(f.band)}" data-epoch="${f.epoch}">
       <div class="findhead">
@@ -801,21 +869,26 @@ function renderFindings(findings) {
         <span class="tactics">${esc((wk.stages || []).join(", ")) || "no stage identified"}${
           wk.tactics.length ? "" : `<span class="faint"> · from rule identity</span>`}</span>
         <span class="faint">${f.alerts} alerts</span>
+        ${wk.agent ? `<span class="faint">on ${esc(wk.agent)}</span>` : ""}
         ${wk.chained ? `<span class="band high">chained</span>` : ""}
         <button type="button" class="mini workbtn">Show the working</button>
       </div>
       <div class="working"><div><div class="workinner">
         <table class="alerts">
-          <thead><tr><th>Term</th><th>What it reads</th><th>Raw</th><th>Norm</th>
-            <th>Weight</th><th>Points</th></tr></thead>
+          <thead><tr><th>Term</th><th>What it reads</th><th>Raw</th><th>Divided by</th>
+            <th>Norm</th><th>Weight</th><th>Points</th></tr></thead>
           <tbody>${parts}</tbody>
         </table>
         <div class="faint" style="margin:2px 0 12px">
-          Base ${wk.base.toFixed(2)}${wk.chained
-            ? `, multiplied by ${wk.chain.toFixed(4)} because credential access and persistence
-               both appear in this window`
-            : ", with no chain multiplier: this window shows only one stage"}.
+          ${mode} An <span class="mono">m</span> beside a divisor means it was measured there
+          rather than taken from the table.<br>
+          Base ${wk.base.toFixed(2)}, then:<br>${mult}<br>
           Severity ${wk.score.toFixed(1)}.
+          ${(wk.perAgent || []).length > 1
+            ? `<br>Scored per endpoint and led with the worst: ` +
+              wk.perAgent.map(p => `${esc(p.agent || "unnamed")} ${p.score.toFixed(1)}
+                 (${p.alerts})`).join(", ")
+            : ""}
         </div>
         <table class="alerts">
           <thead><tr><th>Rule</th><th>Level</th><th>Fired</th><th>ATT&amp;CK</th>
@@ -833,6 +906,47 @@ function renderFindings(findings) {
       btn.textContent = open ? "Hide the working" : "Show the working";
     });
   });
+}
+
+// What each term is divided by, and the two multipliers that only exist once an endpoint has
+// been watched long enough. The numbers come from the manager rather than being written here,
+// for the same reason the weights do: the page must not be able to describe a calculation
+// other than the one that produced the score above it.
+function adaptiveSection(s) {
+  const a = s.adaptive;
+  if (!a) return "";
+  const rows = Object.keys(a.fixed).map(k => {
+    const b = a.bounds[k];
+    return `<tr><td class="mono">${esc(k)}</td><td>${a.fixed[k]}</td>
+      <td>${b ? `${b[0]} to ${b[1]}, from this endpoint` : "not measured"}</td></tr>`;
+  }).join("");
+  return `
+    <h4>What each term is divided by</h4>
+    <p>A denominator is the reading at which a term counts as saturated. Six failed logins in
+    five minutes is a rounding error on a jump host that sees four hundred a day and the most
+    interesting thing this month on an appliance that has never seen one, so four of the six
+    are measured on the endpoint being scored rather than fixed for everybody. The measurement
+    is that endpoint's median plus three robust standard deviations over its last
+    ${a.warmupWindows ? "few hundred" : ""} completed windows.</p>
+    <p>A measured denominator can only raise the bar, never lower it. Letting it fall would
+    mean a quiet endpoint's most ordinary window saturating a term and outscoring a genuinely
+    busy window elsewhere, which is the wrong way round. The quiet direction is handled by the
+    two multipliers instead.</p>
+    <table><thead><tr><th>Term</th><th>Fixed</th><th>Measured range</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    <p style="margin-top:8px"><b>Novelty</b> adds up to ${(100 * a.noveltyBonus).toFixed(0)}%
+    for alerts whose rule this endpoint has produced ${a.noveltySeen} times or fewer.
+    <b>Routine</b> takes off up to ${(100 * a.routineDiscount).toFixed(0)}% for alerts whose
+    rule it has produced at least ${a.routineSeen} times and is producing now at about the rate
+    it produces at this hour of the day. That is one person's daily mistake discounted while
+    the same signature on a host that has never produced it is not. A window holding a chain
+    never gets the discount, because both halves of a chain can be daily traffic while the
+    pair is not.</p>
+    <p>Neither applies, and every denominator stays fixed, until the endpoint has
+    ${a.warmupWindows} completed windows behind it. A baseline built from ten minutes of data
+    is worse than no baseline, so the working beside each finding says which mode it was in.
+    The history lives on the manager at
+    <span class="mono">/var/lib/wazuh-lab/baseline.json</span>.</p>`;
 }
 
 // The explainer is written once and then left alone. Its content is the method rather than any
@@ -869,10 +983,13 @@ chain = 1 + ${s.chainBonus} · (0.5 + 0.5 · coverage)
           if credential access and persistence
           both appear, otherwise chain = 1
 
-severity = min(100, base · chain)</span>
+severity = min(100, base · chain · novelty · routine)</span>
     <p>A stage counts whether ATT&amp;CK named it or the rule id implied it, so alerts arriving
-    with no ATT&amp;CK metadata are not scored as though nothing happened.</p>
+    with no ATT&amp;CK metadata are not scored as though nothing happened. A window is scored
+    once per endpoint and the worst endpoint is what is shown, so credential access on one
+    machine and a new account on another do not earn the chain between them.</p>
     <table><tbody>${rows}</tbody></table>
+    ${adaptiveSection(s)}
     <p style="margin-bottom:6px">Bands: ${bands}</p>
     <p>A window reaching elevated or above becomes a finding, and findings are what the export
     button writes out. The weights are judgement rather than fitted parameters, and they live in

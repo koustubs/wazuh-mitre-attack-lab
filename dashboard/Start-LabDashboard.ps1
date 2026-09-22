@@ -139,16 +139,18 @@ $script:LastSequencePoll = [datetime]::MinValue
 $RemoteStatusScript = @'
 import base64, calendar, datetime, json, math, os, subprocess
 
-def run(cmd, timeout=8):
+def run(cmd, timeout=8, data=None):
+    """A command and its output. data goes in on stdin, which is how the baseline is handed
+    over: it is a few kilobytes of JSON and an argument list is the wrong place for it."""
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, input=data)
         return r.returncode, (r.stdout or '')
     except Exception:
         return 1, ''
 
 out = {'services': [], 'agents': [], 'alerts': [], 'coverage': {}, 'attack': [],
        'rate': [], 'log': [], 'window': None, 'disk': None, 'indexer': None,
-       'scoring': None, 'missing': []}
+       'scoring': None, 'alertSource': None, 'missing': []}
 
 # The deployed model, and the code that evaluates it. Both are substituted in before this
 # script is encoded; see the note beside $ScorerPath. Absent, the two markers stay as they
@@ -193,9 +195,40 @@ else:
     except Exception:
         out['missing'].append('indexer')
 
+# The alerts. From the indexer where it will answer, from the tail of alerts.json where it
+# will not.
+#
+# The tail is the fallback now rather than the path. It read the last 400 KB and the newest
+# 800 lines, so a busy window quietly lost its oldest records and was still scored as though
+# it were complete, and every hour older than the tail was drawn on the rate chart as quieter
+# than it had been. The indexer is asked for an explicit range instead, and it counts with
+# aggregations that see every matching document rather than only the ones fetched.
+#
+# Keeping the tail costs a dozen lines and buys two things worth more: a lab whose indexer is
+# down still shows its alerts, and a manager that has not had Enable-LabDashboard.ps1 re-run
+# against it still works rather than showing an empty panel and no reason for it.
+#
+# Eighteen windows at the shipped five minute width. Twelve are displayed and scored; the six
+# behind them are what the baseline is folded from, so no window on the page has ever been
+# folded into the baseline it is being scored against.
+ALERT_SPAN_MINUTES = 90
 alerts_path = '/var/ossec/logs/alerts/alerts.json'
 records = []
-if not os.access(alerts_path, os.R_OK):
+indexed = None
+rc, text = run(['sudo', '-n', '/usr/local/bin/lab-dashboard-indexer', 'alerts',
+                str(ALERT_SPAN_MINUTES)], 20)
+if rc == 0:
+    try:
+        indexed = json.loads(text)
+        records = indexed.get('records') or []
+    except Exception:
+        indexed = None
+
+if indexed is not None:
+    out['alertSource'] = {'from': 'indexer', 'spanMinutes': ALERT_SPAN_MINUTES,
+                          'total': indexed.get('total'), 'returned': indexed.get('returned'),
+                          'truncated': bool(indexed.get('truncated'))}
+elif not os.access(alerts_path, os.R_OK):
     out['missing'].append('alerts')
 else:
     try:
@@ -209,6 +242,11 @@ else:
                 records.append(json.loads(line))
             except Exception:
                 continue
+        # Say that this read has a ceiling and whether it hit one. A window at the old end of
+        # a truncated sample is missing records that nothing else on the page can show are
+        # missing, and that is exactly the failure this reports rather than hides.
+        out['alertSource'] = {'from': 'log-tail', 'returned': len(records),
+                              'truncated': bool(len(lines) > 800 or size > 400000)}
     except Exception:
         out['missing'].append('alerts')
 
@@ -232,25 +270,38 @@ if records:
     first = (records[0].get('timestamp') or '')
     out['window'] = {'from': first[11:16], 'fromDate': first[:10], 'count': len(records)}
 
-# Per rule, how many times it fired in the sample and when it last did. The dashboard crosses
-# this with the rule file on the host, which is what makes a rule that has never fired visible.
-for a in records:
-    rule = a.get('rule', {}) or {}
-    rid = str(rule.get('id', ''))
-    if not rid:
-        continue
-    stamp = (a.get('timestamp') or '')
-    entry = out['coverage'].setdefault(rid, {'count': 0, 'last': '', 'lastDate': '', 'level': rule.get('level', '')})
-    entry['count'] += 1
-    if stamp[11:19] and stamp > (entry['lastDate'] + 'T' + entry['last']):
-        entry['last'] = stamp[11:19]
-        entry['lastDate'] = stamp[:10]
+# Per rule, how many times it fired and when it last did. The dashboard crosses this with the
+# rule file on the host, which is what makes a rule that exists and has never fired visible.
+#
+# From the indexer's aggregations where there are any, because a terms aggregation counts every
+# matching document over twelve hours rather than only the ones this poll happened to fetch.
+# Counted out of the fetch, a rule that fired forty times two hours ago reads as a rule that
+# fired twice, which is a different fact about the lab.
+if indexed is not None and 'coverage' in indexed:
+    for rid, entry in (indexed.get('coverage') or {}).items():
+        stamp = entry.get('timestamp') or ''
+        out['coverage'][str(rid)] = {'count': entry.get('count', 0), 'last': stamp[11:19],
+                                     'lastDate': stamp[:10], 'level': entry.get('level', '')}
+    out['attack'] = list(indexed.get('attack') or [])
+else:
+    for a in records:
+        rule = a.get('rule', {}) or {}
+        rid = str(rule.get('id', ''))
+        if not rid:
+            continue
+        stamp = (a.get('timestamp') or '')
+        entry = out['coverage'].setdefault(rid, {'count': 0, 'last': '', 'lastDate': '', 'level': rule.get('level', '')})
+        entry['count'] += 1
+        if stamp[11:19] and stamp > (entry['lastDate'] + 'T' + entry['last']):
+            entry['last'] = stamp[11:19]
+            entry['lastDate'] = stamp[:10]
 
-tally = {}
-for a in records:
-    for tech in ((a.get('rule', {}) or {}).get('mitre', {}) or {}).get('technique', []) or []:
-        tally[tech] = tally.get(tech, 0) + 1
-out['attack'] = [{'tech': k, 'count': v} for k, v in sorted(tally.items(), key=lambda kv: -kv[1])]
+    tally = {}
+    for a in records:
+        for tech in ((a.get('rule', {}) or {}).get('mitre', {}) or {}).get('technique', []) or []:
+            tally[tech] = tally.get(tech, 0) + 1
+    out['attack'] = [{'tech': k, 'count': v}
+                     for k, v in sorted(tally.items(), key=lambda kv: -kv[1])]
 
 # Sequence scoring. The rules above judge one event at a time; this judges a run of them.
 #
@@ -308,6 +359,11 @@ else:
         mitre = rule.get('mitre', {}) or {}
         buckets.setdefault(lo, []).append({
             'at': t - lo, 'ruleId': rid, 'level': int(rule.get('level') or 0),
+            # Which endpoint produced it. Dropped here until now, which meant credential
+            # access on one machine and a new account on another earned the same chain
+            # multiplier as both happening on one machine, and meant there was nothing for a
+            # per endpoint baseline to be a baseline of.
+            'agent': (a.get('agent') or {}).get('name') or '',
             'desc': (rule.get('description') or '')[:70],
             'tactics': mitre.get('tactic') or [],
             'techniques': mitre.get('id') or mitre.get('technique') or []})
@@ -318,16 +374,87 @@ else:
     last = _epoch(records[-1].get('timestamp') or '')
     current = width * math.floor(last / width) if last is not None else None
 
-    shown = sorted(buckets)[-12:]
+    ordered = sorted(buckets)
+    shown = ordered[-12:]
+    # Completed and already off the bottom of the page. These are what the baseline is folded
+    # from. Holding a window back until it has scrolled off is what keeps anything on the page
+    # from being scored against a baseline it is itself part of, and it is also why the score
+    # beside a window does not shift under the reader between one poll and the next.
+    foldable = [lo for lo in ordered[:-12] if lo != current]
+
+    def _by_agent(al):
+        groups = {}
+        for one in al:
+            groups.setdefault(one.get('agent') or '', []).append(one)
+        return groups
+
+    def _observation(name, lo, share):
+        """One endpoint's share of one completed window, in the shape the baseline folds.
+
+        Computed here, from the same alerts the scoring reads, rather than recomputed on the
+        far side. A baseline derived from a second implementation of these five numbers would
+        be a baseline for something slightly other than the thing being scored, and that is
+        the failure that looks like a working panel.
+        """
+        levels = [float(x.get('level') or 0) for x in share]
+        times = sorted(float(x.get('at') or 0.0) for x in share)
+        burst, right = 0, 0
+        for left, t in enumerate(times):
+            while right < len(times) and times[right] < t + 60.0:
+                right += 1
+            burst = max(burst, right - left)
+        rules = {}
+        for x in share:
+            rules[str(x.get('ruleId'))] = rules.get(str(x.get('ruleId')), 0) + 1
+        stamp = datetime.datetime.utcfromtimestamp(lo)
+        return {
+            'agent': name, 'epoch': lo,
+            # The manager's own hour. _epoch strips the offset rather than applying it, so
+            # these seconds are already local wall clock read as though they were UTC, and
+            # utcfromtimestamp is what reads them back the same way.
+            'hour': stamp.hour,
+            'at': stamp.strftime('%Y-%m-%dT%H:%M:%S'),
+            'count': len(share),
+            'peak': max(levels) if levels else 0.0,
+            'mass': sum(2.0 ** ((L - 7.0) / 2.0) for L in levels if L >= 7.0),
+            'burst': burst,
+            'distinct': len(set(x.get('ruleId') for x in share)),
+            'prob': round(score(_model, features(share)), 4),
+            'rules': rules,
+        }
+
+    observations = []
+    for lo in foldable:
+        for name, share in _by_agent(buckets[lo]).items():
+            observations.append(_observation(name, lo, share))
+
+    # One call, which prints the baseline as it stood before these observations and then folds
+    # them in. Missing, or refused, and every denominator stays at its fixed value; the panel
+    # reports which mode it is in rather than letting a reader assume the other one.
+    baselines, baseline_note = {}, 'unavailable'
+    rc, text = run(['sudo', '-n', '/usr/local/bin/lab-dashboard-baseline'], 20,
+                   json.dumps({'observations': observations}))
+    if rc == 0:
+        try:
+            baselines = (json.loads(text) or {}).get('agents') or {}
+            baseline_note = 'ok'
+        except Exception:
+            baselines, baseline_note = {}, 'unreadable'
+
     wins = []
     for lo in shown:
         al = buckets[lo]
         p = score(_model, features(al))
-        sev = severity(al, p, _model['threshold'])
+        sev = severity_by_agent(al, p, _model['threshold'], baselines,
+                                datetime.datetime.utcfromtimestamp(lo).hour, _model)
         wins.append({
             'severity': sev['score'],
             'band': sev['band'],
             'working': sev,
+            # The endpoint the severity belongs to. A window is scored per endpoint and the
+            # worst one is what the page leads with, so saying which one it was is the
+            # difference between a number and a finding.
+            'agent': sev.get('agent') or '',
             'at': datetime.datetime.utcfromtimestamp(lo).strftime('%H:%M'),
             'epoch': lo,
             'score': round(p, 4),
@@ -383,6 +510,28 @@ else:
                             for k, w, l in SEVERITY_WEIGHTS],
         'chainBonus': CHAIN_BONUS,
         'bands': [{'floor': f, 'name': nm} for f, nm in BANDS],
+        # The same argument, extended to the denominators. The explainer could print what each
+        # component was divided by only if it knew the divisors, and it could not, so it
+        # printed the weights and left the halves of the fraction that actually moved per
+        # endpoint out of the account entirely.
+        'adaptive': {
+            'warmupWindows': WARMUP_WINDOWS,
+            'fixed': FIXED_DENOMINATORS,
+            'bounds': dict((k, list(v)) for k, v in DENOMINATOR_BOUNDS.items()),
+            'noveltyBonus': NOVELTY_BONUS,
+            'routineDiscount': ROUTINE_DISCOUNT,
+            'noveltySeen': NOVELTY_SEEN,
+            'routineSeen': ROUTINE_SEEN,
+        },
+        # Where the alerts came from and whether all of them arrived. A truncated read used to
+        # be indistinguishable from a quiet hour.
+        'source': out.get('alertSource'),
+        'baseline': {
+            'note': baseline_note,
+            'folded': len(observations),
+            'windows': dict((k, int((v or {}).get('windows') or 0))
+                            for k, v in baselines.items()),
+        },
         'covers': {'from': datetime.datetime.utcfromtimestamp(span[0]).strftime('%H:%M'),
                    'windows': len(span)},
         'model': {
@@ -399,10 +548,19 @@ else:
 now = datetime.datetime.now()
 keys = [(now - datetime.timedelta(hours=i)).strftime('%Y-%m-%dT%H') for i in range(11, -1, -1)]
 counts = dict((k, 0) for k in keys)
-for a in records:
-    k = (a.get('timestamp') or '')[:13]
-    if k in counts:
-        counts[k] += 1
+if indexed is not None and 'hourly' in indexed:
+    # Epoch seconds out of the date histogram, placed in this manager's own hours. The
+    # aggregation could have been asked to bucket by time zone instead, and then the chart
+    # would depend on the indexer and the manager agreeing about what that offset is.
+    for bucket in indexed.get('hourly') or []:
+        k = datetime.datetime.fromtimestamp(bucket.get('at') or 0).strftime('%Y-%m-%dT%H')
+        if k in counts:
+            counts[k] += int(bucket.get('count') or 0)
+else:
+    for a in records:
+        k = (a.get('timestamp') or '')[:13]
+        if k in counts:
+            counts[k] += 1
 out['rate'] = [{'hour': k[11:13], 'count': counts[k]} for k in keys]
 
 log_path = '/var/ossec/logs/ossec.log'
