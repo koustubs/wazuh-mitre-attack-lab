@@ -147,9 +147,15 @@ import json, subprocess, sys
 
 CERTS = '/etc/wazuh-indexer/certs'
 BASE = 'https://127.0.0.1:9200'
-# The most documents one fetch returns. A busy five minute window in this lab is a few hundred
-# alerts, so this is three orders of magnitude of headroom, and saying plainly when it has been
-# reached is worth more than a larger number would be.
+# The most documents one fetch returns. Reaching it is not an argument for raising it: the
+# panels are drawn from the aggregations below, which count every matching document whatever
+# this returns, and a fetch that hits the ceiling sets truncated so the page says so.
+#
+# Measured, because the note that stood here guessed "a few hundred alerts in a busy five minute
+# window, so this is three orders of magnitude of headroom" and was wrong in the direction that
+# matters. Three minutes of real logins at about twenty five a second put 17,100 alerts into one
+# hour and 16,631 into a fifteen minute window. The ceiling is reachable by an endpoint that is
+# merely busy.
 MAX_DOCS = 5000
 FIELDS = ['timestamp', 'agent.name', 'rule.id', 'rule.level', 'rule.description',
           'rule.mitre.id', 'rule.mitre.tactic', 'rule.mitre.technique']
