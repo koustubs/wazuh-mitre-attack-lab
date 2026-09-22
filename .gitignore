@@ -38,3 +38,4 @@ desktop.ini
 # The report page is an intermediate: build-report.py regenerates it from the
 # measurement artefacts every time, and the PDF beside the proposal is the deliverable.
 05-detection-modelling/report/report.html
+docs/progress-update/update.html
