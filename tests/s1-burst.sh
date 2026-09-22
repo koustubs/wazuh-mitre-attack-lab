@@ -5,6 +5,20 @@
 # aimed at the same account with a chosen gap between them. That is what the frequency rule
 # edge cases need: rule 100111 is frequency 6 within a 120 second window, so proving the window
 # expires requires two bursts either side of that boundary.
+#
+# Read this before trusting a result from two bursts placed around that boundary. 100111's own
+# 120 seconds is not the only window in play and it is not the longest. The stock ruleset
+# correlates across bursts as well: 5551 is frequency 8 / timeframe 180, 40111 is 12 / 160, and
+# 40501 is 4 / 300. Six failures is one burst's worth, so two bursts inside those spans reach
+# thresholds one burst never does, and analysisd, which emits one alert per event, gives the
+# event to the stock composite instead of to 100111.
+#
+# Measured: a second six-failure burst 45 seconds after the first produced no 100111 at all. It
+# produced 5551, then 40111, then 40501 at level 15. The same burst after a five minute gap
+# produced 100111 as expected. So a pair of bursts 130 seconds apart, which is the natural way
+# to probe a 120 second boundary, will show the second one failing to alert for a reason that
+# has nothing to do with the boundary being tested. Leave more than 300 seconds between a pair
+# and anything before it, and read the rule ids rather than counting alerts.
 set -euo pipefail
 umask 077
 [[ $# == 2 ]] || { echo 'Usage: sudo bash s1-burst.sh <account> <count>' >&2; exit 1; }
