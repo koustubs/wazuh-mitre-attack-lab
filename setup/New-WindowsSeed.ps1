@@ -1,58 +1,185 @@
 #requires -Version 5.1
 <#
-Builds an unattended-setup ISO for the Windows endpoint.
+    Builds the unattended-setup seed for the Windows endpoint.
 
-Windows Setup scans attached media for autounattend.xml at the root, so this only needs to be a
-plain data ISO. The file carries the local account password, so it is written into .lab-secrets
-and never committed.
+    Windows Setup scans attached media for autounattend.xml at the root, so this only needs to
+    be a plain data ISO. It carries two files:
 
-The edition key below is Microsoft's published generic Volume License Setup Key for Windows 11
-Pro. It selects the edition during setup and does not activate anything, so the VM runs
-unactivated. That is fine for a disposable lab.
+        autounattend.xml            partitioning, the local account, the first logon command
+        Initialize-LabEndpoint.ps1  what that command runs
+
+    The second exists because the alternative is a four hundred character PowerShell one-liner
+    escaped into XML, which is what this used to be and which nobody can read or change safely.
+
+    The ISO carries the local account password in clear, which is how autounattend works. It is
+    written into .lab-secrets and never committed.
+
+        .\New-WindowsSeed.ps1
+        .\New-WindowsSeed.ps1 -ImageName 'Windows 11 Pro' -ProductKey W269N-WFGWX-YVC9B-4J6C9-T83GX
 #>
 [CmdletBinding()]
 param(
-    [string]$SecretsPath = (Join-Path $PSScriptRoot '.lab-secrets'),
-    [string]$ComputerName = 'WAZUH-WIN',
-    [string]$Address = '172.29.70.20',
-    [string]$Gateway = '172.29.70.1'
+    [ValidateSet('lean', 'full')][string]$Profile,
+    [ValidateSet('hyperv', 'virtualbox')][string]$Backend,
+    # The edition inside your ISO, as the image list names it. Leave it unset for an ISO that
+    # holds one edition, which includes the free Windows 11 Enterprise evaluation image; Setup
+    # then installs the only thing there is. Set it for a multi-edition retail or VL ISO, where
+    # Setup would otherwise stop on the edition picker and wait for a human.
+    [string]$ImageName,
+    # Leave unset for the evaluation image, which needs no key and rejects one. Microsoft's
+    # published generic Volume License Setup Key for Windows 11 Pro is
+    # W269N-WFGWX-YVC9B-4J6C9-T83GX; it selects the edition and activates nothing, so the guest
+    # runs unactivated, which is fine for a lab that gets deleted.
+    [string]$ProductKey,
+    [string]$OutputPath
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'LabConfig.ps1')
+. (Join-Path $PSScriptRoot 'LabIso.ps1')
 
-$password = (Get-Content (Join-Path $SecretsPath 'console-password.txt') -Raw).Trim()
-if ($password -notmatch '^[A-Za-z0-9]+$') { throw 'Password must be alphanumeric so it is safe to embed in XML.' }
-
-if (-not ('LabIso' -as [type])) {
-    Add-Type -TypeDefinition @'
-using System;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.ComTypes;
-public static class LabIso {
-    public static void Write(object image, string path) {
-        IStream stream = (IStream)image;
-        using (FileStream file = File.Create(path)) {
-            byte[] buffer = new byte[2048];
-            IntPtr read = Marshal.AllocHGlobal(4);
-            try {
-                int count;
-                do {
-                    stream.Read(buffer, buffer.Length, read);
-                    count = Marshal.ReadInt32(read);
-                    if (count > 0) { file.Write(buffer, 0, count); }
-                } while (count == buffer.Length);
-            } finally { Marshal.FreeHGlobal(read); }
-        }
-    }
+$config = if ($Profile) { Get-LabConfig -Profile $Profile } else { Get-LabConfig }
+$vms    = if ($Profile) { Get-LabVms -Profile $Profile }    else { Get-LabVms }
+if (-not $Backend) { $Backend = $config.backend }
+if (-not $vms.Contains('WAZUH-WIN')) {
+    throw "The $($config.profile) profile has no Windows endpoint, so there is nothing to seed. Use -Profile full."
 }
-'@
+$vm = $vms['WAZUH-WIN']
+$net = $config.network
+
+$secrets = Get-LabPath Secrets
+if (-not $OutputPath) { $OutputPath = Get-LabPath Seeds }
+
+$password = (Get-Content -LiteralPath (Join-Path $secrets 'console-password.txt') -Raw).Trim()
+if ($password -notmatch '^[A-Za-z0-9]+$') {
+    throw 'The console password must be alphanumeric so it is safe to embed in XML unescaped. Run New-LabSecrets.ps1.'
+}
+$publicKey = (Get-Content -LiteralPath (Join-Path $secrets 'lab_ed25519.pub') -Raw).Trim()
+if (-not $publicKey.StartsWith('ssh-')) {
+    throw 'The public key in .lab-secrets does not look like one. Run New-LabSecrets.ps1.'
 }
 
-# First logon can run before the synthetic NIC reports Up, in which case the adapter lookup
-# returns nothing and the address is never applied, leaving the endpoint on an APIPA address.
-# Wait for the adapter instead of assuming it is ready.
-$network = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"`$a = `$null; for (`$i = 0; `$i -lt 30 -and -not `$a; `$i++) { `$a = Get-NetAdapter | Where-Object { `$_.Status -eq 'Up' } | Select-Object -First 1; if (-not `$a) { Start-Sleep -Seconds 2 } }; if (`$a) { Set-NetIPInterface -InterfaceIndex `$a.ifIndex -Dhcp Disabled; New-NetIPAddress -InterfaceIndex `$a.ifIndex -IPAddress $Address -PrefixLength 24 -DefaultGateway $Gateway; Set-DnsClientServerAddress -InterfaceIndex `$a.ifIndex -ServerAddresses 1.1.1.1,8.8.8.8 }`""
+$user = $config.guest.user
+$labMac = Get-LabMacAddress -Address $vm.Address -Separator '-'
+$dns = ($net.dns -join ',')
+
+# ---- what runs at first logon ------------------------------------------------------------------
+#
+# Kept as a file on the seed rather than inlined into the XML. Anything here can be read, diffed
+# and fixed; the same logic escaped into a <CommandLine> element cannot.
+
+$firstLogon = @"
+#requires -Version 5.1
+<#
+    Runs once, at the Windows endpoint's first logon, from the unattend seed.
+
+    Three jobs: put the endpoint on its lab address, make it reachable over SSH the same way
+    the Linux guests are, and let nothing else in.
+
+    SSH rather than PowerShell Direct. PowerShell Direct is a Hyper-V feature with no
+    VirtualBox equivalent, so the dashboard could only ever have reached this endpoint on one
+    of the two backends. OpenSSH Server is in Windows as an optional capability and works on
+    both.
+#>
+`$ErrorActionPreference = 'Stop'
+`$log = 'C:\Windows\Temp\lab-firstlogon.log'
+function Write-Step { param([string]`$Message) Add-Content -Path `$log -Value ("{0}  {1}" -f (Get-Date -Format s), `$Message) }
+
+Write-Step 'start'
+
+# ---- the lab address ---------------------------------------------------------------------------
+#
+# Matched on the MAC the host assigned, not on "the first adapter that is Up". On VirtualBox
+# there are two adapters and the other one is the internet; on Hyper-V there is one, but the
+# adapter can still report Down for a few seconds after logon, and the old code's answer to
+# that was to take whatever it found first.
+
+`$adapter = `$null
+for (`$i = 0; `$i -lt 30 -and -not `$adapter; `$i++) {
+    `$adapter = Get-NetAdapter | Where-Object { `$_.MacAddress -eq '$labMac' } | Select-Object -First 1
+    if (-not `$adapter) { Start-Sleep -Seconds 2 }
+}
+if (-not `$adapter) {
+    Write-Step 'no adapter with MAC $labMac; leaving the network alone'
+} else {
+    Write-Step ('adapter {0} (index {1})' -f `$adapter.Name, `$adapter.ifIndex)
+    Set-NetIPInterface -InterfaceIndex `$adapter.ifIndex -Dhcp Disabled
+    New-NetIPAddress -InterfaceIndex `$adapter.ifIndex -IPAddress '$($vm.Address)' ``
+        -PrefixLength $($net.prefixLength) -DefaultGateway '$($net.gateway)'
+    Set-DnsClientServerAddress -InterfaceIndex `$adapter.ifIndex -ServerAddresses $dns
+    Write-Step 'address set'
+}
+
+# ---- OpenSSH Server ----------------------------------------------------------------------------
+
+Write-Step 'installing OpenSSH Server'
+`$capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server*' | Select-Object -First 1
+if (`$capability -and `$capability.State -ne 'Installed') {
+    Add-WindowsCapability -Online -Name `$capability.Name | Out-Null
+}
+Set-Service -Name sshd -StartupType Automatic
+Start-Service -Name sshd
+Write-Step 'sshd running'
+
+# PowerShell rather than cmd, so the dashboard's remote calls read the same on both endpoints.
+New-Item -Path 'HKLM:\SOFTWARE\OpenSSH' -Force | Out-Null
+New-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell ``
+    -Value 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -PropertyType String -Force | Out-Null
+
+# An administrator's key does not live in their profile on Windows. sshd reads this one file for
+# every member of the Administrators group, and refuses it unless only Administrators and SYSTEM
+# can write it.
+`$adminKeys = 'C:\ProgramData\ssh\administrators_authorized_keys'
+Set-Content -Path `$adminKeys -Value '$publicKey' -Encoding ascii
+`$acl = Get-Acl -Path `$adminKeys
+`$acl.SetAccessRuleProtection(`$true, `$false)
+@(`$acl.Access) | ForEach-Object { [void]`$acl.RemoveAccessRule(`$_) }
+foreach (`$who in 'BUILTIN\Administrators', 'NT AUTHORITY\SYSTEM') {
+    `$acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(`$who, 'FullControl', 'Allow')))
+}
+Set-Acl -Path `$adminKeys -AclObject `$acl
+Write-Step 'key installed'
+
+# ---- the firewall ------------------------------------------------------------------------------
+#
+# The endpoint answers on 22 to this host and to nothing else. The Linux guests get the same
+# treatment from ufw in install-agent.sh.
+
+Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+New-NetFirewallRule -Name 'Wazuh-Lab-SSH' -DisplayName 'OpenSSH from the lab host' ``
+    -Enabled True -Direction Inbound -Protocol TCP -Action Allow ``
+    -LocalPort 22 -RemoteAddress '$($net.gateway)' | Out-Null
+Write-Step 'firewall scoped to $($net.gateway)'
+
+Write-Step 'done'
+"@
+
+# ---- autounattend.xml ----------------------------------------------------------------------------
+
+# Finds the seed by volume label rather than by drive letter, which Setup assigns and nothing
+# here can predict. The ampersand is escaped because this ends up inside an XML element.
+$launch = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "&amp; ((Get-Volume -FileSystemLabel LABSEED).DriveLetter + '':\Initialize-LabEndpoint.ps1'')"'
+
+# Omitted entirely when no edition was named. An ISO with one image installs it; naming an
+# edition that is not in the ISO fails the install, which is a worse default than not naming one.
+$installFrom = ''
+if ($ImageName) {
+    $installFrom = @"
+
+          <InstallFrom>
+            <MetaData wcm:action="add"><Key>/IMAGE/NAME</Key><Value>$ImageName</Value></MetaData>
+          </InstallFrom>
+"@
+}
+
+# Likewise. The evaluation image rejects a key, and a Pro ISO needs one to skip the prompt.
+$productKey = ''
+if ($ProductKey) {
+    $productKey = @"
+
+        <ProductKey><Key>$ProductKey</Key><WillShowUI>OnError</WillShowUI></ProductKey>
+"@
+}
 
 $xml = @"
 <?xml version="1.0" encoding="utf-8"?>
@@ -84,24 +211,20 @@ $xml = @"
         </Disk>
       </DiskConfiguration>
       <ImageInstall>
-        <OSImage>
-          <InstallFrom>
-            <MetaData wcm:action="add"><Key>/IMAGE/NAME</Key><Value>Windows 11 Pro</Value></MetaData>
-          </InstallFrom>
+        <OSImage>$installFrom
           <InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>
           <WillShowUI>OnError</WillShowUI>
         </OSImage>
       </ImageInstall>
       <UserData>
-        <AcceptEula>true</AcceptEula>
-        <ProductKey><Key>W269N-WFGWX-YVC9B-4J6C9-T83GX</Key><WillShowUI>OnError</WillShowUI></ProductKey>
+        <AcceptEula>true</AcceptEula>$productKey
       </UserData>
     </component>
   </settings>
   <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-      <ComputerName>$ComputerName</ComputerName>
-      <TimeZone>UTC</TimeZone>
+      <ComputerName>$($vm.Hostname)</ComputerName>
+      <TimeZone>$($config.guest.timezone)</TimeZone>
     </component>
   </settings>
   <settings pass="oobeSystem">
@@ -117,15 +240,15 @@ $xml = @"
       <UserAccounts>
         <LocalAccounts>
           <LocalAccount wcm:action="add">
-            <Name>labadmin</Name>
-            <DisplayName>labadmin</DisplayName>
+            <Name>$user</Name>
+            <DisplayName>$user</DisplayName>
             <Group>Administrators</Group>
             <Password><Value>$password</Value><PlainText>true</PlainText></Password>
           </LocalAccount>
         </LocalAccounts>
       </UserAccounts>
       <AutoLogon>
-        <Username>labadmin</Username>
+        <Username>$user</Username>
         <Enabled>true</Enabled>
         <LogonCount>1</LogonCount>
         <Password><Value>$password</Value><PlainText>true</PlainText></Password>
@@ -133,8 +256,8 @@ $xml = @"
       <FirstLogonCommands>
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <Description>Static lab address</Description>
-          <CommandLine>$network</CommandLine>
+          <Description>Lab address, OpenSSH Server, firewall</Description>
+          <CommandLine>$launch</CommandLine>
         </SynchronousCommand>
       </FirstLogonCommands>
     </component>
@@ -142,25 +265,35 @@ $xml = @"
 </unattend>
 "@
 
+# ---- build the ISO -------------------------------------------------------------------------------
+
 $staging = Join-Path ([IO.Path]::GetTempPath()) 'labseed-windows'
-if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
+if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
 New-Item -ItemType Directory -Path $staging | Out-Null
-[IO.File]::WriteAllText((Join-Path $staging 'autounattend.xml'), $xml, (New-Object Text.UTF8Encoding($false)))
 
-# Fail here rather than halfway through a Windows install.
-[void][xml](Get-Content (Join-Path $staging 'autounattend.xml') -Raw)
+# CRLF, unlike the cloud-init seeds. Both files here are read by Windows.
+[IO.File]::WriteAllText((Join-Path $staging 'autounattend.xml'), $xml, (New-Object Text.UTF8Encoding $false))
+[IO.File]::WriteAllText((Join-Path $staging 'Initialize-LabEndpoint.ps1'), $firstLogon, (New-Object Text.UTF8Encoding $false))
 
-$outputDir = Join-Path $SecretsPath 'seeds'
-New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-$iso = Join-Path $outputDir 'windows-unattend.iso'
-if (Test-Path $iso) { Remove-Item $iso -Force }
+# Both checked here rather than halfway through a Windows install, where the only symptom is a
+# guest sitting on a setup screen waiting for a keyboard.
+[void][xml](Get-Content -LiteralPath (Join-Path $staging 'autounattend.xml') -Raw)
+$parseErrors = $null
+[void][System.Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $staging 'Initialize-LabEndpoint.ps1'), [ref]$null, [ref]$parseErrors)
+if ($parseErrors) {
+    throw ("The generated first logon script does not parse:`n  {0}" -f (($parseErrors | ForEach-Object { $_.Message }) -join "`n  "))
+}
 
-$image = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
-$image.FileSystemsToCreate = 3
-$image.VolumeName = 'UNATTEND'
-$image.Root.AddTree($staging, $false)
-[LabIso]::Write($image.CreateResultImage().ImageStream, $iso)
-[void][Runtime.InteropServices.Marshal]::ReleaseComObject($image)
-Remove-Item $staging -Recurse -Force
+New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
+$iso = Join-Path $OutputPath 'windows-unattend.iso'
+New-LabDataIso -SourceDirectory $staging -IsoPath $iso -VolumeName 'LABSEED'
+Remove-Item -LiteralPath $staging -Recurse -Force
 
-Write-Output ("windows-unattend.iso -> {0} bytes (XML validated)" -f (Get-Item $iso).Length)
+Write-Output ("windows-unattend.iso   {0} bytes  {1}  {2}" -f (Get-Item -LiteralPath $iso).Length, $vm.Hostname, $vm.Address)
+Write-Output ''
+Write-Output ("XML and first logon script both validated. Built for {0}, adapter {1}." -f $Backend, $labMac)
+if (-not $ImageName) {
+    Write-Output 'No edition named. Setup will install the only image in the ISO; pass -ImageName for a multi-edition one.'
+}
+Write-Output 'Next: setup\New-Lab.ps1 -WindowsIso <your Windows 11 ISO>'

@@ -51,7 +51,9 @@
       "hostname": "WAZUH-WIN",
       "os": "windows",
       "address": "172.29.70.20",
-      "probes": [],
+      "probes": [
+        { "label": "ssh 22", "port": 22 }
+      ],
       "resources": {
         "full": { "memoryMb": 4096, "minMemoryMb": 2048, "maxMemoryMb": 6144, "cpu": 2, "diskGb": 64 }
       }

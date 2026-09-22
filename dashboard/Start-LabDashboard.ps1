@@ -79,6 +79,11 @@ $LabSshUser = $LabConfig.guest.user
 $LabSshNull = Get-LabNullDevice
 $ManagerAddress = $LabVms['WAZUH-MANAGER'].Address
 
+# Everything the profile builds that is not the manager. Written down once because four places
+# had @('WAZUH-WIN', 'WAZUH-LINUX') spelled out, and on the lean profile, which has no Windows
+# endpoint, every one of them would have waited for a VM that was never going to appear.
+$LabEndpoints = @($LabVms.Keys | Where-Object { $_ -ne 'WAZUH-MANAGER' })
+
 # Units the Advanced panel may control, and the only ones the sudoers rule permits. Anything not
 # named here cannot be touched from this dashboard.
 $ManagerUnits = @('wazuh-manager', 'wazuh-indexer', 'wazuh-dashboard', 'filebeat')
@@ -646,9 +651,19 @@ function Invoke-ServiceAction {
     if (-not $LabVms.Contains($VmName)) { throw "Unknown VM: $VmName" }
     $allowed = if ($VmName -eq 'WAZUH-MANAGER') { $ManagerUnits } else { $EndpointUnits }
     if ($Unit -notin $allowed) { throw "This dashboard will not control $Unit on $VmName." }
-    if ($VmName -eq 'WAZUH-WIN') { throw 'The Windows agent cannot be controlled from here; it has no SSH access.' }
     $address = $LabVms[$VmName].Address
-    $result = Invoke-LabSsh -Address $address -Command ('sudo -n systemctl {0} {1} && systemctl is-active {1}' -f $Action, $Unit)
+
+    if ($VmName -eq 'WAZUH-WIN') {
+        # Same transport, different service manager. The agent is a Windows service called
+        # WazuhSvc, and $EndpointUnits names it wazuh-agent because that is what it is called
+        # everywhere else in this lab, including in the page.
+        $verb = @{ start = 'Start-Service'; stop = 'Stop-Service'; restart = 'Restart-Service' }[$Action]
+        $command = '{0} -Name WazuhSvc; (Get-Service -Name WazuhSvc).Status' -f $verb
+    } else {
+        $command = 'sudo -n systemctl {0} {1} && systemctl is-active {1}' -f $Action, $Unit
+    }
+
+    $result = Invoke-LabSsh -Address $address -Command $command
     if (-not $result) { throw "Could not $Action $Unit on $VmName. Check that the one-time setup has been run." }
     return ('{0} on {1} is now {2}.' -f $Unit, $VmName, $result.Trim())
 }
@@ -661,10 +676,14 @@ function Invoke-LabScenario {
     As a job, always. S1 makes six logon attempts with pauses between them, so it runs for well
     over a minute, and the listener is single threaded.
 
-    Linux goes over SSH to a wrapper the sudoers rule names by exact arguments. Windows goes over
-    PowerShell Direct, which needs no network and no open port on that machine, using the console
-    credential from .lab-secrets. That credential is read at the moment of the action and not
-    held anywhere.
+    Both endpoints go over SSH. Linux reaches a wrapper the sudoers rule names by exact
+    arguments; Windows gets the driver copied across and run, then deleted.
+
+    Windows used to go over PowerShell Direct with the console password out of .lab-secrets.
+    PowerShell Direct is a Hyper-V feature with no VirtualBox equivalent, so that path could
+    only ever have worked on one of the two backends. The endpoint's first logon installs
+    OpenSSH Server and the lab's public key instead, which also means the console password is
+    no longer read to run a scenario.
     #>
     param([string]$VmName, [string]$Scenario, [string]$Mode)
     if ($Scenario -notin @('S1', 'S2', 'S3')) { throw "Unknown scenario: $Scenario" }
@@ -695,39 +714,34 @@ function Invoke-LabScenario {
             ($output | Select-Object -Last 1)
         } -ArgumentList $LabSshKey, $LabSshUser, $LabVms[$VmName].Address, $Scenario, $Mode, $LabSshNull | Out-Null
     } else {
-        $passwordFile = Join-Path (Get-LabPath Secrets) 'console-password.txt'
         $scriptFile = Join-Path $PSScriptRoot '..\agents\windows\Invoke-Scenario.ps1'
-        if (-not (Test-Path -LiteralPath $passwordFile)) { throw 'The console password is missing from .lab-secrets.' }
         if (-not (Test-Path -LiteralPath $scriptFile)) { throw 'The Windows scenario driver is missing from the repository.' }
+        $scriptFile = (Resolve-Path -LiteralPath $scriptFile).Path
         Start-Job -Name $label -ScriptBlock {
-            param($PasswordFile, $ScriptFile, $VmName, $Scenario, $Comparison)
+            param($Key, $User, $Address, $ScriptFile, $Scenario, $Comparison, $NullDevice)
             $ErrorActionPreference = 'Stop'
-            $secure = ConvertTo-SecureString ((Get-Content -LiteralPath $PasswordFile -Raw).Trim()) -AsPlainText -Force
-            $credential = New-Object System.Management.Automation.PSCredential('labadmin', $secure)
-            $source = Get-Content -LiteralPath $ScriptFile -Raw
-            # The script is sent rather than pre-staged, so nothing has to be kept in sync on the
-            # guest.
-            $result = Invoke-Command -VMName $VmName -Credential $credential -ScriptBlock {
-                param($Source, $Scenario, $Comparison)
-                $temp = Join-Path $env:TEMP 'lab-scenario.ps1'
-                Set-Content -LiteralPath $temp -Value $Source -Encoding UTF8
-                try {
-                    # Run it through powershell.exe rather than dot-sourcing it. The guest's
-                    # execution policy blocks a script file outright, and this is also the only
-                    # form that still honours the driver's own "#requires -RunAsAdministrator",
-                    # which a scriptblock would silently drop. The bypass applies to this one
-                    # invocation and changes nothing on the machine.
-                    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $temp, '-Scenario', $Scenario)
-                    if ($Comparison) { $argv += '-Comparison' }
-                    $output = & powershell.exe @argv 2>&1
-                    if ($LASTEXITCODE -ne 0) { throw (($output -join ' ').Trim()) }
-                    ($output | Select-Object -Last 1)
-                } finally {
-                    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
-                }
-            } -ArgumentList $source, $Scenario, $Comparison
-            $result
-        } -ArgumentList $passwordFile, $scriptFile, $VmName, $Scenario, ($Mode -eq 'comparison') | Out-Null
+            $common = @(
+                '-i', $Key, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no',
+                '-o', ('UserKnownHostsFile={0}' -f $NullDevice), '-o', 'ConnectTimeout=8',
+                '-o', 'LogLevel=ERROR'
+            )
+            # Copied rather than pre-staged, so nothing has to be kept in sync on the guest.
+            $copy = & scp.exe @common $ScriptFile ('{0}@{1}:C:/Windows/Temp/lab-scenario.ps1' -f $User, $Address) 2>&1
+            if ($LASTEXITCODE -ne 0) { throw ('could not copy the driver across: {0}' -f (($copy -join ' ').Trim())) }
+
+            # Run it through powershell.exe rather than dot-sourcing it. That is the only form
+            # that still honours the driver's own "#requires -RunAsAdministrator", and the
+            # bypass applies to this one invocation and changes nothing on the machine.
+            $command = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Windows\Temp\lab-scenario.ps1 -Scenario ' + $Scenario
+            if ($Comparison) { $command += ' -Comparison' }
+            # The driver's exit code has to survive the cleanup, or a failed scenario reports
+            # whatever Remove-Item thought of the temporary file.
+            $command += '; $code = $LASTEXITCODE; Remove-Item C:\Windows\Temp\lab-scenario.ps1 -Force -ErrorAction SilentlyContinue; exit $code'
+
+            $output = & ssh.exe @common ('{0}@{1}' -f $User, $Address) $command 2>&1
+            if ($LASTEXITCODE -ne 0) { throw ('the endpoint refused it: {0}' -f (($output -join ' ').Trim())) }
+            ($output | Select-Object -Last 1)
+        } -ArgumentList $LabSshKey, $LabSshUser, $LabVms[$VmName].Address, $scriptFile, $Scenario, ($Mode -eq 'comparison'), $LabSshNull | Out-Null
     }
 
     $what = if ($Mode -eq 'comparison') { 'the benign comparison' } else { 'the attack case' }
@@ -1057,6 +1071,27 @@ function Get-LabCredentials {
     $consoleProblem = $(if ($consolePassword) { $null }
                         else { 'Not read. .lab-secrets\console-password.txt is missing. Run setup\New-LabSecrets.ps1.' })
 
+    # Built from the profile rather than listed. The lean profile has no Windows endpoint, and a
+    # credentials panel offering a login to a machine that does not exist is worse than one that
+    # is short.
+    $endpointEntries = foreach ($name in $LabEndpoints) {
+        $endpoint = $LabVms[$name]
+        [ordered]@{
+            id       = $name.ToLower()
+            label    = ('{0} endpoint, SSH and console' -f $(if ($endpoint.Os -eq 'windows') { 'Windows' } else { 'Linux' }))
+            target   = ('{0}@{1}' -f $LabSshUser, $endpoint.Address)
+            link     = $null
+            username = $LabSshUser
+            secret   = $consolePassword
+            problem  = $consoleProblem
+            note     = $(if ($endpoint.Os -eq 'windows') {
+                            'The same key as the manager. sshd reads it from administrators_authorized_keys, and the firewall there answers only this host.'
+                        } else {
+                            'The same key and the same console password as the manager.'
+                        })
+        }
+    }
+
     [ordered]@{
         ok      = $true
         entries = @(
@@ -1078,29 +1113,10 @@ function Get-LabCredentials {
                 username = $LabSshUser
                 secret   = $consolePassword
                 problem  = $consoleProblem
-                note     = $(if ($keyPresent) { 'SSH uses the key at .lab-secrets\lab_ed25519. The password below is for the Hyper-V console.' }
+                note     = $(if ($keyPresent) { 'SSH uses the key at .lab-secrets\lab_ed25519. The password below is for the VM console.' }
                              else { 'The SSH key is missing, so only the console password will work.' })
             }
-            [ordered]@{
-                id       = 'linux'
-                label    = 'Linux endpoint, SSH and console'
-                target   = ('{0}@{1}' -f $LabSshUser, $LabVms['WAZUH-LINUX'].Address)
-                link     = $null
-                username = $LabSshUser
-                secret   = $consolePassword
-                problem  = $consoleProblem
-                note     = 'The same key and the same console password as the manager.'
-            }
-            [ordered]@{
-                id       = 'windows'
-                label    = 'Windows endpoint, console'
-                target   = 'WAZUH-WIN, Hyper-V console'
-                link     = $null
-                username = $LabSshUser
-                secret   = $consolePassword
-                problem  = $consoleProblem
-                note     = 'No SSH and no open port on this one. The account logs in automatically at the console.'
-            }
+            $endpointEntries
         )
     }
 }
@@ -1290,14 +1306,14 @@ function Enter-LabPhase {
             }
         }
         'endpoints' {
-            foreach ($name in @('WAZUH-WIN', 'WAZUH-LINUX')) {
+            foreach ($name in $LabEndpoints) {
                 if ((Get-VmStateFrom -Vms $Vms -Name $name) -eq 'Off') {
                     Invoke-VmAction -VmName $name -Action 'start' | Out-Null
                 }
             }
         }
         'endpoints-off' {
-            foreach ($name in @('WAZUH-WIN', 'WAZUH-LINUX')) {
+            foreach ($name in $LabEndpoints) {
                 if ((Get-VmStateFrom -Vms $Vms -Name $name) -eq 'Running') {
                     Invoke-VmAction -VmName $name -Action 'shutdown' | Out-Null
                 }
@@ -1331,7 +1347,7 @@ function Test-LabPhase {
             return $true
         }
         'endpoints' {
-            foreach ($name in @('WAZUH-WIN', 'WAZUH-LINUX')) {
+            foreach ($name in $LabEndpoints) {
                 if ((Get-VmStateFrom -Vms $Vms -Name $name) -ne 'Running') { return $false }
             }
             return $true
@@ -1346,10 +1362,10 @@ function Test-LabPhase {
                 return $true
             }
             $live = @($Health.agents | Where-Object { $_.status -match 'active' })
-            return ($live.Count -ge 2)
+            return ($live.Count -ge $LabEndpoints.Count)
         }
         'endpoints-off' {
-            foreach ($name in @('WAZUH-WIN', 'WAZUH-LINUX')) {
+            foreach ($name in $LabEndpoints) {
                 if ((Get-VmStateFrom -Vms $Vms -Name $name) -eq 'Running') { return $false }
             }
             return $true
