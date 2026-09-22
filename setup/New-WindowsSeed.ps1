@@ -243,6 +243,17 @@ $xml = @"
     </component>
   </settings>
   <settings pass="oobeSystem">
+    <!-- Locale again, and not a copy-paste of the windowsPE block above. The WinPE
+         component covers the installer; without this one OOBE opens on "Is this the right
+         country or region?" and then the keyboard layout, and waits, whatever every
+         Hide element below says. Setup caches this file and applies the rest of the pass
+         on its own, so those two screens were the whole of what needed a human. -->
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
       <OOBE>
         <HideEULAPage>true</HideEULAPage>
