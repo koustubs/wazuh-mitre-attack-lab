@@ -55,6 +55,15 @@ $agentAddresses = @(
     }
 ) -join ' '
 
+# The names the manager registers in client.keys, in the same order. configure-manager.sh used
+# to have "for name in wazuh-windows wazuh-linux" written into it, which creates an identity for
+# an endpoint the lean profile never builds.
+$agentNames = @(
+    foreach ($name in $vms.Keys) {
+        if ($name -ne 'WAZUH-MANAGER' -and $vms[$name].AgentName) { $vms[$name].AgentName }
+    }
+) -join ' '
+
 $values = [ordered]@{
     LAB_PROFILE           = $active
     LAB_BACKEND           = $config.backend
@@ -72,6 +81,7 @@ $values = [ordered]@{
     LAB_WINDOWS_HOST      = Get-LabVmField 'WAZUH-WIN' 'Hostname'
     LAB_WINDOWS_ADDR      = Get-LabVmField 'WAZUH-WIN' 'Address'
     LAB_AGENT_ADDRS       = $agentAddresses
+    LAB_AGENT_NAMES       = $agentNames
     LAB_WAZUH_VERSION     = $config.wazuh.version
     LAB_WAZUH_PKG_VERSION = $config.wazuh.packageVersion
     LAB_INDEXER_HEAP_MB   = [string]$config.profiles.$active.indexerHeapMb

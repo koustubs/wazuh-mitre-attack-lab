@@ -2,7 +2,20 @@
 set -euo pipefail
 umask 077
 [[ $EUID == 0 ]] || { echo 'Run with sudo.' >&2; exit 1; }
-[[ $(hostname -s) == wazuh-manager ]] || { echo 'Run this on the wazuh-manager lab VM.' >&2; exit 1; }
+lab_env=${LAB_ENV_FILE:-/etc/wazuh-lab/lab.env}
+if [[ -r $lab_env ]]; then
+    # shellcheck disable=SC1090
+    . "$lab_env"
+else
+    echo "No $lab_env. Using the shipped defaults." >&2
+fi
+: "${LAB_MANAGER_HOST:=wazuh-manager}"
+: "${LAB_GUEST_USER:=labadmin}"
+# One identity per endpoint the profile builds. This was "wazuh-windows wazuh-linux" written
+# into the loop below, which registers an agent for a machine the lean profile never creates.
+: "${LAB_AGENT_NAMES:=wazuh-windows wazuh-linux}"
+
+[[ $(hostname -s) == "$LAB_MANAGER_HOST" ]] || { echo "Run this on the $LAB_MANAGER_HOST lab VM." >&2; exit 1; }
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 for package in wazuh-manager wazuh-indexer wazuh-dashboard; do
     installed=$(dpkg-query -W -f='${Version}' "$package")
@@ -41,13 +54,31 @@ if ! /var/ossec/bin/wazuh-analysisd -t >>"$log" 2>&1; then
     echo "Configuration validation failed; previous config restored. Details: $log" >&2
     exit 1
 fi
-for name in wazuh-windows wazuh-linux; do
+for name in $LAB_AGENT_NAMES; do
     if ! awk -v name="$name" '$2 == name { found=1 } END { exit !found }' /var/ossec/etc/client.keys; then
         /var/ossec/bin/manage_agents -a any -n "$name" >>"$log" 2>&1
     fi
     awk -v name="$name" '$2 == name {print}' /var/ossec/etc/client.keys > "/root/wazuh-lab-keys/$name.key"
     [[ $(wc -l < "/root/wazuh-lab-keys/$name.key") == 1 ]] || { echo "Expected one key for $name." >&2; exit 1; }
 done
+
+# A second copy the lab account can read, so the host can collect the keys over SSH without a
+# sudo prompt for every one of them. This is not a weakening: that account has full sudo here
+# already, so it could read /root anyway. What it buys is one transfer step that does not stop
+# and ask for a password.
+key_drop=$(getent passwd "$LAB_GUEST_USER" | cut -d: -f6)/wazuh-lab-keys
+if [[ -n $key_drop && -d $(dirname "$key_drop") ]]; then
+    install -d -o "$LAB_GUEST_USER" -g "$LAB_GUEST_USER" -m 700 "$key_drop"
+    for name in $LAB_AGENT_NAMES; do
+        install -o "$LAB_GUEST_USER" -g "$LAB_GUEST_USER" -m 400 \
+            "/root/wazuh-lab-keys/$name.key" "$key_drop/$name.key"
+    done
+    echo "Agent keys are in $key_drop, readable by $LAB_GUEST_USER."
+else
+    echo "No home directory for $LAB_GUEST_USER; the keys are in /root/wazuh-lab-keys only." >&2
+fi
+
 systemctl restart wazuh-manager
 systemctl is-active --quiet wazuh-manager
-echo 'Manager rules and agent identities configured. Transfer each endpoint key privately over SSH.'
+echo 'Manager rules and agent identities configured.'
+echo 'Run setup\Install-LabAgents.ps1 on the host to enrol the endpoints.'

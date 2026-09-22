@@ -4,7 +4,10 @@
 param(
     [Parameter(Mandatory)][string]$ManagerAddress,
     [Parameter(Mandatory)][string]$AgentKeyFile,
-    [string]$ExpectedComputerName = 'WAZUH-WIN'
+    [string]$ExpectedComputerName = 'WAZUH-WIN',
+    # What the manager registered this endpoint as in client.keys, which is not the computer
+    # name. Install-LabAgents.ps1 passes both from lab.config.json.
+    [string]$AgentName = 'wazuh-windows'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -15,7 +18,9 @@ if (-not [Net.IPAddress]::TryParse($ManagerAddress, [ref]$address) -or $address.
     throw 'Use the manager IPv4 address.'
 }
 $key = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $AgentKeyFile).Path).Trim()
-if ($key -notmatch '^\d{3,}\s+wazuh-windows\s+\S+\s+[a-fA-F0-9]{64}$') { throw 'Expected the client.keys entry for wazuh-windows.' }
+if ($key -notmatch ('^\d{3,}\s+' + [regex]::Escape($AgentName) + '\s+\S+\s+[a-fA-F0-9]{64}$')) {
+    throw "Expected the client.keys entry for $AgentName."
+}
 $state = Join-Path $env:ProgramData 'WazuhLab'
 New-Item -ItemType Directory -Path $state -Force | Out-Null
 & icacls.exe $state /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null

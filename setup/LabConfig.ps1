@@ -92,6 +92,10 @@ function Get-LabVms {
             Name        = $name
             Role        = $vm.role
             Hostname    = $vm.hostname
+            # What the manager calls this endpoint in client.keys, which is not its hostname:
+            # the Windows guest is WAZUH-WIN on the network and wazuh-windows to the manager.
+            # Empty for the manager, which is not an agent.
+            AgentName   = $(if ($vm.PSObject.Properties.Name -contains 'agentName') { [string]$vm.agentName } else { '' })
             Os          = $vm.os
             Address     = $vm.address
             Probes      = @($vm.probes)
