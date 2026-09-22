@@ -75,7 +75,13 @@ function Get-LabVms {
         A VM absent from the profile is absent from this list. The lean profile has no Windows
         endpoint, and the dashboard must treat that as correct rather than as a missing VM.
     #>
-    param([ValidateSet('lean', 'full')][string]$Profile)
+    param(
+        [ValidateSet('lean', 'full')][string]$Profile,
+        # A subset of the profile's VMs, for rebuilding one machine without touching the others.
+        # Validated against the profile, so a name the profile does not build is an error rather
+        # than an empty result that quietly builds nothing.
+        [string[]]$Only
+    )
 
     $config = if ($Profile) { Get-LabConfig -Profile $Profile } else { Get-LabConfig }
     $active = $config.profile
@@ -106,6 +112,22 @@ function Get-LabVms {
             DiskGb      = [int]$r.diskGb
         }
     }
+
+    if ($Only) {
+        $unknown = @($Only | Where-Object { -not $result.Contains($_) })
+        if ($unknown.Count -gt 0) {
+            throw ("The {0} profile does not build: {1}. It builds {2}." -f
+                $active, ($unknown -join ', '), ($result.Keys -join ', '))
+        }
+        # Walked in the profile's order rather than the order the names were given, because the
+        # order this returns is a start order: the manager comes up before anything enrolling
+        # against it, and -Only should not be able to invert that.
+        $filtered = [ordered]@{}
+        foreach ($name in $result.Keys) {
+            if ($Only -contains $name) { $filtered[$name] = $result[$name] }
+        }
+        $result = $filtered
+    }
     return $result
 }
 
@@ -121,9 +143,16 @@ function Get-LabBudget {
         is the worst case, not the day-one footprint. Checkpoints are the reason for the headroom
         on top.
     #>
-    param([ValidateSet('lean', 'full')][string]$Profile)
+    param(
+        [ValidateSet('lean', 'full')][string]$Profile,
+        [string[]]$Only
+    )
 
-    $vms = if ($Profile) { Get-LabVms -Profile $Profile } else { Get-LabVms }
+    # Splatted rather than branched on both arguments, which is four spellings of one idea.
+    $pass = @{}
+    if ($Profile) { $pass['Profile'] = $Profile }
+    if ($Only)    { $pass['Only']    = $Only }
+    $vms = Get-LabVms @pass
 
     # Summed in a loop rather than with Measure-Object, because the entries are ordered
     # dictionaries and Measure-Object -Property only sees object properties, not hashtable keys.

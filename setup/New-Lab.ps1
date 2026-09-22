@@ -26,15 +26,24 @@ param(
     # Windows 11 Enterprise evaluation image works and needs no product key; docs\setup.md says
     # where to get it.
     [string]$WindowsIso,
-    [string]$StorageRoot
+    [string]$StorageRoot,
+    # Build part of the profile rather than all of it, for when one guest has to be replaced and
+    # the others are fine. Without it the only way to rebuild a dead endpoint is Remove-Lab.ps1,
+    # which takes a manager that was half an hour of installing down with it.
+    [string[]]$Only
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'LabBackend.ps1')
 
 $config = if ($Profile) { Get-LabConfig -Profile $Profile } else { Get-LabConfig }
-$vms    = if ($Profile) { Get-LabVms -Profile $Profile }    else { Get-LabVms }
-$budget = if ($Profile) { Get-LabBudget -Profile $Profile }  else { Get-LabBudget }
+$pass = @{}
+if ($Profile) { $pass['Profile'] = $Profile }
+if ($Only)    { $pass['Only']    = $Only }
+$vms    = Get-LabVms @pass
+# Costed over the same subset, so building one endpoint is not refused for wanting the whole
+# profile's disk.
+$budget = Get-LabBudget @pass
 if (-not $Backend) { $Backend = $config.backend }
 Import-LabBackend -Backend $Backend | Out-Null
 
@@ -132,8 +141,10 @@ if ($problems.Count -gt 0) {
 
 # ---- build -------------------------------------------------------------------------------------
 
-Write-Host ("Building the {0} profile on {1}: {2} VMs, {3} GB of memory at startup, up to {4} GB of disk." -f
-    $config.profile, $Backend, $budget.VmCount, $budget.MemoryGb, $budget.DiskGb)
+$what = "the {0} profile" -f $config.profile
+if ($Only) { $what = "{0} of the {1} profile" -f ($vms.Keys -join ', '), $config.profile }
+Write-Host ("Building {0} on {1}: {2} VMs, {3} GB of memory at startup, up to {4} GB of disk." -f
+    $what, $Backend, $budget.VmCount, $budget.MemoryGb, $budget.DiskGb)
 
 if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Path $root | Out-Null }
 
@@ -178,19 +189,31 @@ foreach ($name in $vms.Keys) {
     Set-LabVmNoAutostart -Name $name
 }
 
-$manager = $vms['WAZUH-MANAGER']
 $keyPath = Join-Path (Get-LabPath Secrets) 'lab_ed25519'
 
 Write-Host ''
-Write-Host ("The {0} profile is built under {1}." -f $config.profile, $root) -ForegroundColor Green
+Write-Host ("Built under {0}: {1}." -f $root, ($vms.Keys -join ', ')) -ForegroundColor Green
 Write-Host 'Nothing is running and nothing starts with the host. Next:'
 Write-Host ''
-Write-Host ("  1. Start {0} and give cloud-init a minute or two on its first boot." -f $manager.Name)
-Write-Host "     Either the dashboard's power buttons, or your hypervisor's own console."
-Write-Host ("  2. ssh -i {0} {1}@{2}" -f $keyPath, $config.guest.user, $manager.Address)
-Write-Host '  3. Copy manager\install-manager.sh over and run it with sudo.'
-if ($windowsCount -gt 0) {
-    Write-Host '  4. The Windows endpoint installs itself from the unattend seed. It reboots twice.'
+if ($vms.Contains('WAZUH-MANAGER')) {
+    $manager = $vms['WAZUH-MANAGER']
+    Write-Host ("  1. Start {0} and give cloud-init a minute or two on its first boot." -f $manager.Name)
+    Write-Host "     Either the dashboard's power buttons, or your hypervisor's own console."
+    Write-Host ("  2. ssh -i {0} {1}@{2}" -f $keyPath, $config.guest.user, $manager.Address)
+    Write-Host '  3. Copy manager\install-manager.sh over and run it with sudo.'
+    if ($windowsCount -gt 0) {
+        Write-Host '  4. The Windows endpoint installs itself from the unattend seed. It reboots twice.'
+    }
+} else {
+    # A subset build against a manager that is already up, so the install steps above are behind
+    # us and what is left is the new guest joining what is already there.
+    if ($windowsCount -gt 0) {
+        Write-Host '  1. The Windows endpoint installs itself from the unattend seed. It reboots twice.'
+        Write-Host '     Give it twenty minutes or so before the next step.'
+    } else {
+        Write-Host '  1. Start it and give cloud-init a minute or two on its first boot.'
+    }
+    Write-Host ("  2. Enrol it: setup\Install-LabAgents.ps1 -Only {0}" -f ($vms.Keys -join ','))
 }
 Write-Host ''
 Write-Host 'Teardown, when you are done: setup\Remove-Lab.ps1'
