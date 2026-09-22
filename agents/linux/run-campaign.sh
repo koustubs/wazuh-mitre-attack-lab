@@ -34,11 +34,26 @@ readonly EVIDENCE_ROOT=/var/log/wazuh-lab/evidence
 readonly STAFF_PREFIX=labstaff
 readonly MAX_HOURS=48
 
-# Rule 100111 is frequency 6 / timeframe 120. Two S1 runs closer together than the timeframe
-# share a counting window, so failures from the first are counted towards the second and a
-# benign run can be swept into a composite alert it did not cause. That is a wrong label going
-# into training data, which is worse than having less of it. 150 leaves slack for a busy host.
-readonly MIN_S1_GAP=150
+# Two S1 runs closer together than the rules' counting windows share a window, so failures from
+# the first are counted towards the second and a benign run can be swept into a composite alert
+# it did not cause. That is a wrong label going into training data, which is worse than having
+# less of it.
+#
+# 150 was picked from rule 100111's own frequency 6 / timeframe 120, which is not the binding
+# window. The stock ruleset correlates across runs as well and over longer spans: 5551 is
+# frequency 8 / timeframe 180, 40111 is 12 / 160, and 40501 is 4 / 300. One S1 run produces six
+# PAM login failures, so two runs inside those spans produce twelve and cross thresholds a
+# single run never reaches. Analysisd emits one alert per event, so the stock composite takes
+# the event 100111 was counting towards and 100111 never fires.
+#
+# Measured on the lean profile, three consecutive S1 test runs:
+#
+#   run 1  host quiet         100111 fired, 17.4s after the scenario started
+#   run 2  45s after run 1    100111 did not fire at all; 5551, then 40111, then 40501 level 15
+#   run 3  315s after run 2   100111 fired again, 22.9s in
+#
+# So the gap has to clear 300 rather than 120. 330 keeps the slack the old number was after.
+readonly MIN_S1_GAP=330
 
 # Standing accounts that produce the ordinary login traffic. Weighted so the users have
 # different shapes: one present all night, one only early, one rare. Without this, normal in the
@@ -381,12 +396,14 @@ cmd_start() {
     # is the worst shape for a fault: silent, and only visible in the morning.
     chmod 0755 "$(dirname -- "$CAMPAIGN_ROOT")" "$CAMPAIGN_ROOT" "$dir"
     chmod 0644 "$dir/campaign.jsonl" "$dir/activity.jsonl" "$dir/campaign.log"
-    python3 - "$dir/campaign.state" "$campaign" "$(iso)" "$hours" "$(hostname -s)" <<'PY'
+    python3 - "$dir/campaign.state" "$campaign" "$(iso)" "$hours" "$(hostname -s)" "$MIN_S1_GAP" <<'PY'
 import json, pathlib, sys
-p, campaign, started, hours, host = sys.argv[1:]
+# The gap arrives as an argument rather than being written out here too. It was a second copy of
+# the constant, and a second copy is one that can disagree with the one the campaign honours.
+p, campaign, started, hours, host, gap = sys.argv[1:]
 pathlib.Path(p).write_text(json.dumps(dict(
     campaignId=campaign, startedAt=started, hours=int(hours), endpoint=host,
-    minS1GapSeconds=150, running=False), indent=2) + '\n')
+    minS1GapSeconds=int(gap), running=False), indent=2) + '\n')
 PY
     chmod 0644 "$dir/campaign.state"
 

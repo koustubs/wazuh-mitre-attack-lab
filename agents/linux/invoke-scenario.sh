@@ -25,6 +25,24 @@ if [[ -n $logons ]]; then
     }
 fi
 systemctl is-active --quiet wazuh-agent || { echo 'Start the Wazuh agent first.' >&2; exit 1; }
+# A second run of the same scenario inside the stock ruleset's correlation windows does not
+# raise the same alerts as the first. Measured for S1: a run 45 seconds after another produced
+# no 100111 at all, because the stock composites 5551, 40111 and 40501 counted both runs
+# together and took the events it needed. The longest of those windows is 300 seconds.
+#
+# run-campaign.sh already spaces its own S1 runs for this reason. This is for the person running
+# lab-scenario by hand, who otherwise watches a detection case apparently fail with nothing to
+# say why. A warning and not a refusal: two runs back to back is a reasonable thing to want to
+# look at, and the alerts it raises are real. Being surprised by it is the part worth avoiding.
+if [[ -d /var/log/wazuh-lab/evidence ]]; then
+    recent=$(find /var/log/wazuh-lab/evidence -maxdepth 1 -type d -name "$scenario-*" -mmin -5 |
+             wc -l)
+    if (( recent > 0 )); then
+        echo "Note: a $scenario run finished less than five minutes ago. The stock rules" >&2
+        echo 'correlate across both runs, so this one will not raise the same alerts as a' >&2
+        echo 'run on a quiet host. Leave five minutes between runs for a clean result.' >&2
+    fi
+fi
 run_id=$(python3 -c 'import secrets; print(secrets.token_hex(5))')
 name=wz$run_id
 run_dir=/var/log/wazuh-lab/evidence/$scenario-$run_id
