@@ -1151,16 +1151,19 @@ function Export-LabFindings {
 @page { size: A4; margin: 16mm 15mm; }
 body { font: 10pt/1.5 "Charter","Georgia","Cambria",serif; color: #17171a; margin: 0; }
 h1 { font-size: 17pt; margin: 0 0 4px; letter-spacing: -0.01em; }
-h2 { font-size: 11.5pt; margin: 22px 0 7px; padding-bottom: 4px; border-bottom: 1.4px solid #24242a; }
-h3 { font-size: 9.5pt; margin: 13px 0 4px; text-transform: uppercase; letter-spacing: .05em; color: #55555e; }
+h2 { font-size: 11.5pt; margin: 14px 0 6px; padding-bottom: 4px; border-bottom: 1.4px solid #24242a; }
+h3 { font-size: 9.5pt; margin: 10px 0 4px; text-transform: uppercase; letter-spacing: .05em; color: #55555e; }
 p { margin: 0 0 8px; }
-.meta { color: #85858e; font-size: 8.5pt; margin: 0 0 16px; padding-bottom: 10px; border-bottom: 1px solid #d9d9d4; }
+.meta { color: #85858e; font-size: 8.5pt; margin: 0 0 10px; padding-bottom: 7px; border-bottom: 1px solid #d9d9d4; }
 .sub { color: #55555e; font-size: 9.5pt; margin: 0 0 3px; }
 table { border-collapse: collapse; width: 100%; margin: 7px 0 11px; font-size: 9pt; }
 th { text-align: left; font-size: 7.5pt; text-transform: uppercase; letter-spacing: .05em; color: #55555e;
      border-bottom: 1.2px solid #24242a; padding: 0 7px 3px 0; font-weight: 650; }
-td { padding: 4px 7px 4px 0; border-bottom: 1px solid #e4e4df; vertical-align: top; }
-td.n, th.n { text-align: right; padding-right: 0; padding-left: 11px;
+td { padding: 3px 7px 3px 0; border-bottom: 1px solid #e4e4df; vertical-align: top; }
+/* Not padding-right: 0. A right aligned number in the middle of a row butts straight into the
+   next cell, which is how the rules table printed "10Linux: repeated incorrect SSH passwords".
+   The last-child rule below still takes the trailing column flush to the margin. */
+td.n, th.n { text-align: right; padding-right: 7px; padding-left: 11px;
             font-variant-numeric: tabular-nums; white-space: nowrap; }
 th:last-child, td:last-child { padding-right: 0; text-align: right; }
 .band { display: inline-block; font-size: 8pt; font-weight: 650; text-transform: uppercase;
@@ -1176,8 +1179,11 @@ th:last-child, td:last-child { padding-right: 0; text-align: right; }
 .formula { display: block; background: #f3f3ef; border: 1px solid #e4e4df; border-radius: 4px;
            padding: 8px 10px; margin: 6px 0 9px; font: 8.5pt/1.7 Consolas, monospace;
            white-space: pre-wrap; }
-.aside { background: #f5f5f1; border: 1px solid #d9d9d4; border-radius: 4px; padding: 9px 12px;
-         margin: 11px 0; font-size: 9pt; }
+.aside { background: #f5f5f1; border: 1px solid #d9d9d4; border-radius: 4px; padding: 8px 12px;
+         margin: 9px 0; font-size: 9pt; }
+/* The header block plus the caveat leaves about 600pt, and the first card is about the same.
+   These paddings are trimmed so a card clears that line, because break-inside: avoid below
+   turns a near miss into an almost empty first page rather than a slightly tight one. */
 .aside p:last-child { margin-bottom: 0; }
 footer { margin-top: 20px; padding-top: 9px; border-top: 1px solid #d9d9d4; color: #85858e; font-size: 8pt; }
 h2, h3 { break-after: avoid; page-break-after: avoid; }
