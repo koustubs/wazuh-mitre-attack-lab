@@ -407,10 +407,9 @@ all three states the panel can be in. It has not yet been watched against a live
   end to end, which is not the same as seeing the score move while an S1 burst runs. That is
   ten minutes with both VMs up and it is the screenshot worth having.
 
-**From the external review, `docs/handoff-review-2026-09-21.md`.** An outside pass over the
-repository and the session exports found five code issues that have not been fixed. They are
-listed here rather than in that file alone so they are not lost, and none of them reverses the
-headline result that logistic regression beats the sequence model on all eight folds.
+**From an external review, 21 September 2026.** An outside pass over the repository found
+five code issues that have not been fixed. None of them reverses the headline result that
+logistic regression beats the sequence model on all eight folds.
 
 - `05-detection-modelling/features.py` ranks equal scores by input order, so a binary
   single-rule score gets an order-dependent average precision. Grouping ties gives about
@@ -430,11 +429,6 @@ headline result that logistic regression beats the sequence model on all eight f
 - `import-ait.py` anchors windows to the first capture event and keeps at most 256 events per
   window, while live scoring uses epoch boundaries and a global tail limit. Training and live
   features are therefore not sampled the same way.
-
-Also from that review, and already fixed: the shareable session export carried an
-administrator password on three pages because the redaction matched on the label immediately
-preceding a value. Redaction is now by value, and `check-export.py` verifies the finished PDF
-rather than the HTML it came from.
 
 **Housekeeping:**
 
