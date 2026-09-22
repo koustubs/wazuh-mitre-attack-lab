@@ -55,6 +55,12 @@ if (( mem_mb < 3700 || cores < 2 )); then
     fi
     exit 1
 fi
+# Resolved before the cd below, not after it. readlink -f resolves a relative path against
+# the current directory, and $0 is relative for the documented invocation, which is
+# "sudo bash manager/install-manager.sh" from the home directory. Asked after the cd, it
+# answered /root/wazuh-lab-install/manager/install-manager.sh, so the tuning step below found
+# no tune-manager.sh beside it and skipped itself on every run, whatever had been copied over.
+here="$(dirname "$(readlink -f "$0")")"
 mkdir -p /root/wazuh-lab-install
 cd /root/wazuh-lab-install
 log=/root/wazuh-lab-install/install.log
@@ -88,7 +94,7 @@ echo 'Wazuh installed. Credentials and installer logs are in /root/wazuh-lab-ins
 # The installer accepts every default, which is not the right size for this guest and leaves
 # modules running that nothing here reads. Run the tuning if it was copied across; say so if it
 # was not, rather than leaving an untuned manager looking finished.
-tune="$(dirname "$(readlink -f "$0")")/tune-manager.sh"
+tune="$here/tune-manager.sh"
 if [[ -r $tune ]]; then
     echo 'Tuning for this profile:'
     bash "$tune"
