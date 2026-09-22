@@ -5,7 +5,7 @@ flowchart TB
         LAUNCH["Lab.cmd"]
         UI["dashboard.html<br/>Browser on 127.0.0.1:8077"]
         API["Start-LabDashboard.ps1<br/>Elevated PowerShell HTTP server"]
-        HV["Hyper-V<br/>Three Generation 2 VMs"]
+        HV["Hyper-V or VirtualBox<br/>Two or three VMs, by profile"]
         OFF["Offline modelling<br/>Python, NumPy and PyTorch"]
         MODEL[("scorer/model.json<br/>scorer/score.py")]
         REPORTS[("Reports and local evidence")]
@@ -26,7 +26,8 @@ flowchart TB
         F["Filebeat"]
         IDX[("Wazuh indexer<br/>wazuh-alerts-*")]
         WD["Native Wazuh dashboard<br/>HTTPS 443"]
-        POLL["Temporary Python status script<br/>Health, alert sample and scoring"]
+        POLL["Temporary Python status script<br/>Health, alert search and scoring"]
+        BASE[("baseline.json<br/>What each endpoint normally does")]
     end
     AIT["AIT public alert dataset"]
     SYN["Synthetic inputs<br/>Pipeline checks"]
@@ -38,7 +39,7 @@ flowchart TB
     HV -.->|hosts| WIN
     HV -.->|hosts| LIN
     HV -.->|hosts| CENTRAL
-    API -->|PowerShell Direct| WR --> WE --> WA
+    API -->|SSH 22| WR --> WE --> WA
     API -->|SSH and restricted sudo| LR --> LE --> LA
     WA -->|TCP 1514| M
     LA -->|TCP 1514| M
@@ -46,7 +47,10 @@ flowchart TB
     M --> ALERTS --> F -->|HTTPS 9200 inside manager VM| IDX
     IDX -->|search results| WD --> USER
     API -->|SSH 22: encoded script| POLL
-    ALERTS --> POLL -->|status JSON| API
+    IDX -->|authenticated search over mTLS| POLL
+    ALERTS -.->|fallback when the helper is absent| POLL
+    POLL <-->|completed windows in, baseline out| BASE
+    POLL -->|status JSON| API
     AIT --> OFF
     SYN --> OFF
     OFF --> MODEL -.->|loaded at dashboard startup| API
@@ -56,4 +60,4 @@ flowchart TB
     IDX -.->|matching alerts required| GAP -.->|future lab episodes| OFF
     classDef pending fill:#fff3db,stroke:#a66516,color:#533600
     classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29
-    class MODEL,REPORTS,ALERTS,IDX store
+    class MODEL,REPORTS,ALERTS,IDX,BASE store

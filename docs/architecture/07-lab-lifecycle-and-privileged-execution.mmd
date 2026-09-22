@@ -3,8 +3,8 @@ flowchart LR
     MSTART["Start manager VM<br/>Phase deadline 90 seconds"]
     SSHWAIT["Wait for manager SSH<br/>Deadline 300 seconds"]
     SVCWAIT["Wait for four manager services<br/>Deadline 300 seconds"]
-    ESTART["Start both endpoints<br/>Deadline 180 seconds"]
-    AGWAIT["Wait for both active agents<br/>Deadline 420 seconds"]
+    ESTART["Start the profile's endpoints<br/>Deadline 180 seconds"]
+    AGWAIT["Wait for every profile agent to go active<br/>Deadline 420 seconds"]
     READY["Lab ready"]
     DOWN["User selects take-down"]
     EOFF["Request endpoint shutdown<br/>Deadline 300 seconds"]
@@ -17,7 +17,7 @@ flowchart LR
         WRAP["SSH labadmin<br/>sudo -n lab-scenario Sx mode"]
         LS["Installed Linux scenario driver"]
         WJOB["Windows background job"]
-        WDIRECT["PowerShell Direct<br/>Guest credential, temporary script"]
+        WDIRECT["SSH Administrator<br/>Guest credential, temporary script"]
         WS["Windows scenario driver"]
     end
     CLICK --> MSTART --> SSHWAIT --> SVCWAIT --> ESTART --> AGWAIT --> READY

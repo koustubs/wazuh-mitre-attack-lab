@@ -2,23 +2,39 @@ flowchart LR
     HOST["Host loads score.py and model.json<br/>Once at dashboard startup"]
     ENCODE["Substitute into status script<br/>Base64-encode payload"]
     SSH["SSH: execute Python from stdin<br/>On manager, as labadmin"]
-    TAIL["Read alerts.json tail<br/>Last 400 KB, at most 800 lines"]
-    PARSE["Parse timestamp, rule, level<br/>Tactics, techniques and description"]
-    BUCKET["Epoch-aligned five-minute buckets<br/>All sampled agents combined"]
+    SEARCH["lab-dashboard-indexer alerts N<br/>Authenticated search over mTLS, 90 minutes"]
+    TAIL["Fallback: alerts.json tail<br/>Last 400 KB, at most 800 lines, flagged truncated"]
+    PARSE["Parse timestamp, rule, level, agent<br/>Tactics, techniques and description"]
+    BUCKET["Epoch-aligned five-minute buckets<br/>Split per endpoint"]
     FEATURES["Eleven aggregate features"]
     STANDARD["Standardize with saved mean and SD"]
     LOGISTIC["Dot product plus bias<br/>Clamp logit and apply sigmoid"]
-    HEURISTIC["Six-term severity heuristic<br/>Model is one component"]
-    CO["Credential and persistence co-occurrence<br/>Tactics or lab rule IDs<br/>Multiplier from 1.15 to 1.30"]
+    OBS["Completed windows that have scrolled off the chart<br/>Count, peak, mass, burst, distinct, probability, rules"]
+    BASEH["lab-dashboard-baseline<br/>Prints the state before folding these in"]
+    BASE[("/var/lib/wazuh-lab/baseline.json<br/>Per endpoint: samples, hours, rules")]
+    DEN["Four of six denominators from this endpoint<br/>Median plus three robust SD, floored at the fixed value"]
+    NOV["Novelty and routine<br/>Rules new to the endpoint up, its daily traffic down"]
+    HEURISTIC["Six-term severity, per endpoint<br/>Model is one component"]
+    CO["Credential and persistence on one endpoint<br/>Tactics or lab rule IDs<br/>Multiplier from 1.15 to 1.30"]
+    WARM["Under 24 windows: fixed constants stand<br/>The panel says which mode it is in"]
     PARTIAL["Current logic: newest event bucket<br/>Marked partial until later event arrives"]:::pending
-    DISPLAY["Last twelve nonempty buckets<br/>Model score, severity, band and working"]
+    DISPLAY["Last twelve nonempty buckets<br/>Worst endpoint leads, every endpoint reported"]
     FIND["Completed bucket with severity at least 50<br/>Ranked finding and rule breakdown"]
     JSON["Status JSON over SSH<br/>Cached on host for 10 seconds"]
     PAGE["Browser chart and explanations"]
     PDF["Explicit findings export request"]
-    LIMIT["KNOWN LIMITS<br/>Truncated oldest bucket can look complete<br/>No identity or order check for co-occurrence<br/>Training and live sampling differ"]:::pending
-    HOST --> ENCODE --> SSH --> TAIL --> PARSE --> BUCKET
+    LIMIT["KNOWN LIMITS<br/>Chain multiplier is untested on public data<br/>Both severity arms rank below the model term on AIT<br/>Order within a chain is still not checked"]:::pending
+    HOST --> ENCODE --> SSH --> SEARCH --> PARSE
+    SSH -.->|helper absent or refused| TAIL -.-> PARSE
+    PARSE --> BUCKET
     BUCKET --> FEATURES --> STANDARD --> LOGISTIC --> HEURISTIC
+    BUCKET --> OBS --> BASEH
+    BASEH <--> BASE
+    BASEH -->|state as it stood before these windows| DEN
+    BASEH --> NOV
+    DEN --> HEURISTIC
+    NOV --> HEURISTIC
+    WARM -.->|gates the whole adaptive layer| HEURISTIC
     BUCKET --> CO --> HEURISTIC
     BUCKET --> PARTIAL
     HEURISTIC --> DISPLAY
@@ -27,7 +43,8 @@ flowchart LR
     DISPLAY --> JSON --> PAGE
     FIND --> JSON
     PAGE --> PDF
-    TAIL -.-> LIMIT
     CO -.-> LIMIT
+    HEURISTIC -.-> LIMIT
     classDef pending fill:#fff3db,stroke:#a66516,color:#533600
     classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29
+    class BASE store

@@ -3,7 +3,7 @@ flowchart TB
     subgraph HOST["Windows 11 Pro host"]
         BROWSER["Local browser"]
         HOSTAPI["Local dashboard server<br/>127.0.0.1:8077"]
-        ADMIN["Elevated PowerShell<br/>Hyper-V module"]
+        ADMIN["Elevated PowerShell<br/>Hyper-V or VirtualBox backend module"]
         DISKS[("D:/Wazuh-Lab<br/>VM configuration and virtual disks")]
         GW["vEthernet Wazuh-Lab<br/>172.29.70.1/24"]
         NAT["WinNAT<br/>Outbound connectivity"]
@@ -22,7 +22,7 @@ flowchart TB
     BROWSER --> HOSTAPI
     HOSTAPI --> ADMIN
     ADMIN -->|VM operations| MS
-    ADMIN -->|VM operations and PowerShell Direct| WVM
+    ADMIN -->|VM operations| WVM
     ADMIN -->|VM operations| LVM
     ADMIN --> DISKS
     SW --- GW --> NAT --> INTERNET

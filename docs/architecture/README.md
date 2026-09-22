@@ -1,8 +1,10 @@
 # Wazuh lab: complete project architecture
 
-**Implementation snapshot: 22 September 2026.** This describes the repository at `e46fe8e` and the deployment recorded in the project documentation. It does not claim a fresh live verification. The diagrams include the original detection lab, the Windows control dashboard, the modelling extension, and the paths that remain unfinished.
+**Implementation snapshot: 22 September 2026.** This describes the repository as it stands after the packaging phase, and the deployment recorded in the project documentation. It does not claim a fresh live verification. The diagrams include the detection lab, the Windows control dashboard, the modelling extension, and the paths that remain unfinished.
 
-Open [Wazuh-Project-Architecture.html](Wazuh-Project-Architecture.html) to switch between diagrams, zoom, pan and download SVG or Mermaid source. It is also the file to send: every diagram, style, control and download is embedded, so it needs nothing else to open on another machine. Each diagram below is editable Mermaid. The numbered `.mmd` files are the editable source everything else is rendered from. Rendered SVGs are not kept in the repository: they existed three times over, once per file, once inlined in the HTML and once in this page, for 460 KB of a 2 MB clone. The HTML has a download button for each one.
+Open [Wazuh-Project-Architecture.html](Wazuh-Project-Architecture.html) to switch between diagrams, zoom, pan and download SVG or Mermaid source. It is also the file to send: every diagram, style, control and download is embedded, so it needs nothing else to open on another machine.
+
+The numbered `.mmd` files are the source. The fenced blocks below and the pictures inside the HTML are both written from them by `build-architecture.py`, so edit the `.mmd`, run that, and commit all three. `build-architecture.py --check` says whether they currently agree and is the thing to run before a commit that touches a diagram. Standalone SVG files are not kept: they existed three times over, once per file, once inlined in the HTML and once here, for 460 KB of a 2 MB clone. The HTML has a download button for each one.
 
 Solid arrows mean an implemented data flow, command, or dependency. Dotted arrows mean a reference, an offline artefact transfer, or a dependency explicitly labelled pending. Amber nodes identify known limitations or unfinished components. Blue nodes are application logic, green nodes are stored data, and grey boundaries group infrastructure or execution environments.
 
@@ -18,7 +20,7 @@ flowchart TB
         LAUNCH["Lab.cmd"]
         UI["dashboard.html<br/>Browser on 127.0.0.1:8077"]
         API["Start-LabDashboard.ps1<br/>Elevated PowerShell HTTP server"]
-        HV["Hyper-V<br/>Three Generation 2 VMs"]
+        HV["Hyper-V or VirtualBox<br/>Two or three VMs, by profile"]
         OFF["Offline modelling<br/>Python, NumPy and PyTorch"]
         MODEL[("scorer/model.json<br/>scorer/score.py")]
         REPORTS[("Reports and local evidence")]
@@ -39,7 +41,8 @@ flowchart TB
         F["Filebeat"]
         IDX[("Wazuh indexer<br/>wazuh-alerts-*")]
         WD["Native Wazuh dashboard<br/>HTTPS 443"]
-        POLL["Temporary Python status script<br/>Health, alert sample and scoring"]
+        POLL["Temporary Python status script<br/>Health, alert search and scoring"]
+        BASE[("baseline.json<br/>What each endpoint normally does")]
     end
     AIT["AIT public alert dataset"]
     SYN["Synthetic inputs<br/>Pipeline checks"]
@@ -51,7 +54,7 @@ flowchart TB
     HV -.->|hosts| WIN
     HV -.->|hosts| LIN
     HV -.->|hosts| CENTRAL
-    API -->|PowerShell Direct| WR --> WE --> WA
+    API -->|SSH 22| WR --> WE --> WA
     API -->|SSH and restricted sudo| LR --> LE --> LA
     WA -->|TCP 1514| M
     LA -->|TCP 1514| M
@@ -59,7 +62,10 @@ flowchart TB
     M --> ALERTS --> F -->|HTTPS 9200 inside manager VM| IDX
     IDX -->|search results| WD --> USER
     API -->|SSH 22: encoded script| POLL
-    ALERTS --> POLL -->|status JSON| API
+    IDX -->|authenticated search over mTLS| POLL
+    ALERTS -.->|fallback when the helper is absent| POLL
+    POLL <-->|completed windows in, baseline out| BASE
+    POLL -->|status JSON| API
     AIT --> OFF
     SYN --> OFF
     OFF --> MODEL -.->|loaded at dashboard startup| API
@@ -69,7 +75,7 @@ flowchart TB
     IDX -.->|matching alerts required| GAP -.->|future lab episodes| OFF
     classDef pending fill:#fff3db,stroke:#a66516,color:#533600
     classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29
-    class MODEL,REPORTS,ALERTS,IDX store
+    class MODEL,REPORTS,ALERTS,IDX,BASE store
 ```
 
 The scorer does not feed alerts back into Wazuh, retrain itself, or trigger automatic response. MITRE is a design and classification reference; there is no external MITRE request for each event. Personal Windows host activity is outside the endpoint collection scope.
@@ -82,7 +88,7 @@ flowchart TB
     subgraph HOST["Windows 11 Pro host"]
         BROWSER["Local browser"]
         HOSTAPI["Local dashboard server<br/>127.0.0.1:8077"]
-        ADMIN["Elevated PowerShell<br/>Hyper-V module"]
+        ADMIN["Elevated PowerShell<br/>Hyper-V or VirtualBox backend module"]
         DISKS[("D:/Wazuh-Lab<br/>VM configuration and virtual disks")]
         GW["vEthernet Wazuh-Lab<br/>172.29.70.1/24"]
         NAT["WinNAT<br/>Outbound connectivity"]
@@ -101,7 +107,7 @@ flowchart TB
     BROWSER --> HOSTAPI
     HOSTAPI --> ADMIN
     ADMIN -->|VM operations| MS
-    ADMIN -->|VM operations and PowerShell Direct| WVM
+    ADMIN -->|VM operations| WVM
     ADMIN -->|VM operations| LVM
     ADMIN --> DISKS
     SW --- GW --> NAT --> INTERNET
@@ -137,47 +143,56 @@ The VM allocation is 16 GiB fixed RAM in total. The provisioner requires at leas
 
 ```mermaid
 flowchart LR
-    MEDIA["Ubuntu and Windows ISOs"]
-    PREFLIGHT["Get-LabHost.ps1<br/>Read host capacity and virtualization"]
+    CONFIG[("lab.config.json<br/>Backend, profile, addresses, sizes and versions")]
+    PREFLIGHT["Test-LabHost.ps1<br/>Virtualization, hypervisors, RAM and disk against the profile"]
     SECRETS["New-LabSecrets.ps1"]
-    PRIVATE[("host/.lab-secrets<br/>SSH keypair, console password and hash")]
-    CREATE["New-Lab.ps1<br/>Validate paths, space, names and NAT"]
-    VMS["Switch, NAT, disks and VM definitions"]
-    USEED["New-LabSeeds.ps1<br/>Ubuntu NoCloud seed images"]
+    PRIVATE[("setup/.lab-secrets<br/>SSH keypair, console password and hash")]
+    IMAGE["Get-LabImage.ps1<br/>Fetch, verify against SHA256SUMS, convert"]
+    CLOUDIMG[("Prepared Ubuntu cloud image<br/>Under storageRoot, beside the VM disks")]
+    WMEDIA["Windows 11 ISO<br/>Full profile only; evaluation image needs no key"]
+    GUESTENV["Write-GuestConfig.ps1<br/>lab.config.json as shell assignments"]
+    USEED["New-LabSeeds.ps1<br/>Cloud-init NoCloud seeds, one per Ubuntu guest"]
     WSEED["New-WindowsSeed.ps1<br/>Windows answer-file image"]
-    BOOT["Attach media and boot guests<br/>Ubuntu GRUB autoinstall step"]
-    OS["Installed OS, labadmin<br/>Hostnames and static network"]
+    CREATE["New-Lab.ps1<br/>Network, VMs, boot disk and seed attached"]
+    FIRST["First boot<br/>cloud-init applies account, key, hostname and address"]
+    OS["Running guests, labadmin<br/>/etc/wazuh-lab/lab.env in place"]
     MI["install-manager.sh<br/>Version gate, firewall, all-in-one install"]
+    TUNE["tune-manager.sh<br/>Indexer heap, disabled modules, index retention"]
     MC["configure-manager.sh<br/>Deploy rules and validate analysisd"]
     KEYS[("Manager client.keys<br/>Per-endpoint key exports")]
     MD["configure-dashboard.sh<br/>Create index pattern and default view"]
+    AGENTS["Install-LabAgents.ps1<br/>Collect each key, copy, install on the endpoint"]
     WI["Windows Install-Agent.ps1<br/>Signed MSI, audit policy, config and key"]
     LI["Linux install-agent.sh<br/>APT package, rsyslog, auditd and FIM"]
     READY["Agents enrolled and reporting<br/>Wait for initial FIM baseline"]
-    ENABLE["Enable-LabDashboard.ps1<br/>Guest group access, wrappers and sudoers"]
+    ENABLE["Enable-LabDashboard.ps1<br/>Manager helpers, guest wrappers and sudoers"]
     OPERATE["Lab.cmd<br/>Normal operation"]
-    RET["MANUAL DEPLOYMENT STATE<br/>90-day index retention policy<br/>Not reproduced by setup scripts"]:::pending
+    CONFIG --> PREFLIGHT
+    CONFIG --> IMAGE
+    CONFIG --> GUESTENV
+    CONFIG --> CREATE
     PREFLIGHT --> CREATE
-    MEDIA --> CREATE --> VMS --> BOOT
     SECRETS --> PRIVATE
-    PRIVATE --> USEED --> BOOT
-    PRIVATE --> WSEED --> BOOT
-    MEDIA --> WSEED
-    BOOT --> OS --> MI --> MC
-    MC --> KEYS
+    IMAGE --> CLOUDIMG --> CREATE
+    GUESTENV --> USEED
+    PRIVATE --> USEED --> CREATE
+    PRIVATE --> WSEED --> CREATE
+    WMEDIA --> WSEED
+    WMEDIA --> CREATE
+    CREATE --> FIRST --> OS
+    OS --> MI --> TUNE
+    MI --> MC --> KEYS
     MI --> MD
-    OS --> WI
-    OS --> LI
-    KEYS -->|private key transfer| WI
-    KEYS -->|private key transfer| LI
+    KEYS --> AGENTS
+    OS --> AGENTS
+    AGENTS -->|key delivered, then deleted from the host| WI
+    AGENTS -->|key delivered, then deleted from the host| LI
     WI --> READY
     LI --> READY
     READY --> ENABLE --> OPERATE
     MD --> OPERATE
-    MI -.-> RET
-    classDef pending fill:#fff3db,stroke:#a66516,color:#533600
     classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29
-    class PRIVATE,KEYS store
+    class PRIVATE,KEYS,CONFIG,CLOUDIMG store
 ```
 
 Configuration details:
@@ -319,7 +334,7 @@ flowchart LR
     EXPORT["/api/export-findings<br/>Export current completed findings"]
     LOCK["/api/lock-autostart<br/>Write Nothing only"]
     QUIT["/api/quit<br/>Stop dashboard listener"]
-    VM["Hyper-V and host counters<br/>VM state, CPU, RAM, disk and uptime"]
+    VM["Backend and host counters<br/>VM state, CPU, RAM, disk and uptime"]
     HEALTH["Manager status over SSH<br/>10-second health cache"]
     PROBE["Nonblocking TCP probes<br/>15-second cache"]
     JOBS["Job notices<br/>Asynchronous completion or failure"]
@@ -374,8 +389,8 @@ flowchart LR
     MSTART["Start manager VM<br/>Phase deadline 90 seconds"]
     SSHWAIT["Wait for manager SSH<br/>Deadline 300 seconds"]
     SVCWAIT["Wait for four manager services<br/>Deadline 300 seconds"]
-    ESTART["Start both endpoints<br/>Deadline 180 seconds"]
-    AGWAIT["Wait for both active agents<br/>Deadline 420 seconds"]
+    ESTART["Start the profile's endpoints<br/>Deadline 180 seconds"]
+    AGWAIT["Wait for every profile agent to go active<br/>Deadline 420 seconds"]
     READY["Lab ready"]
     DOWN["User selects take-down"]
     EOFF["Request endpoint shutdown<br/>Deadline 300 seconds"]
@@ -388,7 +403,7 @@ flowchart LR
         WRAP["SSH labadmin<br/>sudo -n lab-scenario Sx mode"]
         LS["Installed Linux scenario driver"]
         WJOB["Windows background job"]
-        WDIRECT["PowerShell Direct<br/>Guest credential, temporary script"]
+        WDIRECT["SSH Administrator<br/>Guest credential, temporary script"]
         WS["Windows scenario driver"]
     end
     CLICK --> MSTART --> SSHWAIT --> SVCWAIT --> ESTART --> AGWAIT --> READY
@@ -479,23 +494,39 @@ flowchart LR
     HOST["Host loads score.py and model.json<br/>Once at dashboard startup"]
     ENCODE["Substitute into status script<br/>Base64-encode payload"]
     SSH["SSH: execute Python from stdin<br/>On manager, as labadmin"]
-    TAIL["Read alerts.json tail<br/>Last 400 KB, at most 800 lines"]
-    PARSE["Parse timestamp, rule, level<br/>Tactics, techniques and description"]
-    BUCKET["Epoch-aligned five-minute buckets<br/>All sampled agents combined"]
+    SEARCH["lab-dashboard-indexer alerts N<br/>Authenticated search over mTLS, 90 minutes"]
+    TAIL["Fallback: alerts.json tail<br/>Last 400 KB, at most 800 lines, flagged truncated"]
+    PARSE["Parse timestamp, rule, level, agent<br/>Tactics, techniques and description"]
+    BUCKET["Epoch-aligned five-minute buckets<br/>Split per endpoint"]
     FEATURES["Eleven aggregate features"]
     STANDARD["Standardize with saved mean and SD"]
     LOGISTIC["Dot product plus bias<br/>Clamp logit and apply sigmoid"]
-    HEURISTIC["Six-term severity heuristic<br/>Model is one component"]
-    CO["Credential and persistence co-occurrence<br/>Tactics or lab rule IDs<br/>Multiplier from 1.15 to 1.30"]
+    OBS["Completed windows that have scrolled off the chart<br/>Count, peak, mass, burst, distinct, probability, rules"]
+    BASEH["lab-dashboard-baseline<br/>Prints the state before folding these in"]
+    BASE[("/var/lib/wazuh-lab/baseline.json<br/>Per endpoint: samples, hours, rules")]
+    DEN["Four of six denominators from this endpoint<br/>Median plus three robust SD, floored at the fixed value"]
+    NOV["Novelty and routine<br/>Rules new to the endpoint up, its daily traffic down"]
+    HEURISTIC["Six-term severity, per endpoint<br/>Model is one component"]
+    CO["Credential and persistence on one endpoint<br/>Tactics or lab rule IDs<br/>Multiplier from 1.15 to 1.30"]
+    WARM["Under 24 windows: fixed constants stand<br/>The panel says which mode it is in"]
     PARTIAL["Current logic: newest event bucket<br/>Marked partial until later event arrives"]:::pending
-    DISPLAY["Last twelve nonempty buckets<br/>Model score, severity, band and working"]
+    DISPLAY["Last twelve nonempty buckets<br/>Worst endpoint leads, every endpoint reported"]
     FIND["Completed bucket with severity at least 50<br/>Ranked finding and rule breakdown"]
     JSON["Status JSON over SSH<br/>Cached on host for 10 seconds"]
     PAGE["Browser chart and explanations"]
     PDF["Explicit findings export request"]
-    LIMIT["KNOWN LIMITS<br/>Truncated oldest bucket can look complete<br/>No identity or order check for co-occurrence<br/>Training and live sampling differ"]:::pending
-    HOST --> ENCODE --> SSH --> TAIL --> PARSE --> BUCKET
+    LIMIT["KNOWN LIMITS<br/>Chain multiplier is untested on public data<br/>Both severity arms rank below the model term on AIT<br/>Order within a chain is still not checked"]:::pending
+    HOST --> ENCODE --> SSH --> SEARCH --> PARSE
+    SSH -.->|helper absent or refused| TAIL -.-> PARSE
+    PARSE --> BUCKET
     BUCKET --> FEATURES --> STANDARD --> LOGISTIC --> HEURISTIC
+    BUCKET --> OBS --> BASEH
+    BASEH <--> BASE
+    BASEH -->|state as it stood before these windows| DEN
+    BASEH --> NOV
+    DEN --> HEURISTIC
+    NOV --> HEURISTIC
+    WARM -.->|gates the whole adaptive layer| HEURISTIC
     BUCKET --> CO --> HEURISTIC
     BUCKET --> PARTIAL
     HEURISTIC --> DISPLAY
@@ -504,10 +535,11 @@ flowchart LR
     DISPLAY --> JSON --> PAGE
     FIND --> JSON
     PAGE --> PDF
-    TAIL -.-> LIMIT
     CO -.-> LIMIT
+    HEURISTIC -.-> LIMIT
     classDef pending fill:#fff3db,stroke:#a66516,color:#533600
     classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29
+    class BASE store
 ```
 
 The manager needs only Python's standard library for inference. NumPy and PyTorch stay on the modelling workstation. Nothing is installed as a scoring daemon, and no separate inference port is opened. The current scorer runs only when the controller refreshes manager health; the browser's faster polling can reuse cached results.
@@ -644,10 +676,10 @@ The report builder uses saved measurement artefacts and a generated `figures.jso
 | Location | Responsibility / contents | Lifecycle |
 | --- | --- | --- |
 | `Lab.cmd` | Entry point for normal host dashboard operation. | Versioned source. |
-| `docs/design/` | Context Markdown and PlantUML/PNG/SVG proposal diagram. | Historical design. |
-| `docs/design/` | Scenarios and acceptance requirements. | Versioned requirements. |
-| `docs/design/` | Submitted stack proposal and later annotations. | Historical design with implementation links. |
-| `setup/` | Host preflight, secrets/seed builders, provisioning, console utility and campaign sync. | Versioned tooling. |
+| `lab.config.json` | Backend, profile, addresses, sizes and versions: the one place they are written down. | Versioned source. |
+| `docs/design/` | The coursework the build started from: context, scenarios, acceptance requirements and the proposed stack, with the PlantUML context diagram. | Historical design, written before the build. |
+| `setup/` | Host preflight, secrets and seed builders, image fetch, provisioning, agent enrolment and teardown. | Versioned tooling. |
+| `setup/backends/` | One twelve-function contract, implemented for Hyper-V and for VirtualBox. | Versioned tooling. |
 | `dashboard/` | PowerShell server, HTML UI, launcher and guest-permission setup. | Versioned application. |
 | `.lab-secrets/` | SSH keys, console credentials and installation seeds. | Local only; excluded from Git. |
 | `manager/` | Pinned installation, rule deployment, native dashboard setup and custom rules. | Versioned configuration. |
@@ -660,11 +692,14 @@ The report builder uses saved measurement artefacts and a generated `figures.jso
 | `scoring/models/` | PyTorch checkpoints. | Offline experiments; ignored. |
 | `scoring/scorer/` | Standard-library inference code and portable JSON weights/provenance. | Versioned deployment artefacts. |
 | `scoring/report/` | Report template, figures and builders. | Source and measurements; generated report HTML ignored. |
-| `docs/` | Proposal, model report, deployment support documents and this architecture. | Reviewable project documentation. |
+| `docs/` | Proposal, model report, the build guide and this architecture. | Reviewable project documentation. |
+| `docs/architecture/*.mmd` | The eleven diagrams, and the only place they are edited. | Versioned source. |
 | `.cache/` | Downloaded engine packages and other build intermediates. | Ignored local cache. |
 | Manager `/var/ossec/etc/` | Runtime rules, main configuration and agent identity keys. | Guest operational configuration. |
 | Manager `/var/ossec/logs/` | Alert stream and manager logs. | Guest operational data. |
 | Manager `/etc/wazuh-indexer/certs/` | Indexer certificates and helper client credentials. | Guest private configuration. |
+| Manager `/var/lib/wazuh-lab/` | Per-endpoint baseline: what each one normally does, folded one completed window at a time. | Guest operational state. |
+| Manager `/usr/local/bin/lab-dashboard-*` | Root-owned helpers the dashboard is granted by exact path: agent list, indexer search, baseline, credentials. | Guest operational tooling. |
 | Manager `/root/wazuh-lab-install/` | Vendor installation artefacts and credential-bearing log. | Guest private setup data. |
 | Windows `%ProgramData%/WazuhLab/` | Audit/config backups and per-run source evidence. | Guest local evidence. |
 | Linux `/var/log/wazuh-lab/` | Setup logs, per-run evidence and campaign records. | Guest local evidence. |

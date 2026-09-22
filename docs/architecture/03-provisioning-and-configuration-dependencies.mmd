@@ -1,42 +1,51 @@
 flowchart LR
-    MEDIA["Ubuntu and Windows ISOs"]
-    PREFLIGHT["Get-LabHost.ps1<br/>Read host capacity and virtualization"]
+    CONFIG[("lab.config.json<br/>Backend, profile, addresses, sizes and versions")]
+    PREFLIGHT["Test-LabHost.ps1<br/>Virtualization, hypervisors, RAM and disk against the profile"]
     SECRETS["New-LabSecrets.ps1"]
-    PRIVATE[("host/.lab-secrets<br/>SSH keypair, console password and hash")]
-    CREATE["New-Lab.ps1<br/>Validate paths, space, names and NAT"]
-    VMS["Switch, NAT, disks and VM definitions"]
-    USEED["New-LabSeeds.ps1<br/>Ubuntu NoCloud seed images"]
+    PRIVATE[("setup/.lab-secrets<br/>SSH keypair, console password and hash")]
+    IMAGE["Get-LabImage.ps1<br/>Fetch, verify against SHA256SUMS, convert"]
+    CLOUDIMG[("Prepared Ubuntu cloud image<br/>Under storageRoot, beside the VM disks")]
+    WMEDIA["Windows 11 ISO<br/>Full profile only; evaluation image needs no key"]
+    GUESTENV["Write-GuestConfig.ps1<br/>lab.config.json as shell assignments"]
+    USEED["New-LabSeeds.ps1<br/>Cloud-init NoCloud seeds, one per Ubuntu guest"]
     WSEED["New-WindowsSeed.ps1<br/>Windows answer-file image"]
-    BOOT["Attach media and boot guests<br/>Ubuntu GRUB autoinstall step"]
-    OS["Installed OS, labadmin<br/>Hostnames and static network"]
+    CREATE["New-Lab.ps1<br/>Network, VMs, boot disk and seed attached"]
+    FIRST["First boot<br/>cloud-init applies account, key, hostname and address"]
+    OS["Running guests, labadmin<br/>/etc/wazuh-lab/lab.env in place"]
     MI["install-manager.sh<br/>Version gate, firewall, all-in-one install"]
+    TUNE["tune-manager.sh<br/>Indexer heap, disabled modules, index retention"]
     MC["configure-manager.sh<br/>Deploy rules and validate analysisd"]
     KEYS[("Manager client.keys<br/>Per-endpoint key exports")]
     MD["configure-dashboard.sh<br/>Create index pattern and default view"]
+    AGENTS["Install-LabAgents.ps1<br/>Collect each key, copy, install on the endpoint"]
     WI["Windows Install-Agent.ps1<br/>Signed MSI, audit policy, config and key"]
     LI["Linux install-agent.sh<br/>APT package, rsyslog, auditd and FIM"]
     READY["Agents enrolled and reporting<br/>Wait for initial FIM baseline"]
-    ENABLE["Enable-LabDashboard.ps1<br/>Guest group access, wrappers and sudoers"]
+    ENABLE["Enable-LabDashboard.ps1<br/>Manager helpers, guest wrappers and sudoers"]
     OPERATE["Lab.cmd<br/>Normal operation"]
-    RET["MANUAL DEPLOYMENT STATE<br/>90-day index retention policy<br/>Not reproduced by setup scripts"]:::pending
+    CONFIG --> PREFLIGHT
+    CONFIG --> IMAGE
+    CONFIG --> GUESTENV
+    CONFIG --> CREATE
     PREFLIGHT --> CREATE
-    MEDIA --> CREATE --> VMS --> BOOT
     SECRETS --> PRIVATE
-    PRIVATE --> USEED --> BOOT
-    PRIVATE --> WSEED --> BOOT
-    MEDIA --> WSEED
-    BOOT --> OS --> MI --> MC
-    MC --> KEYS
+    IMAGE --> CLOUDIMG --> CREATE
+    GUESTENV --> USEED
+    PRIVATE --> USEED --> CREATE
+    PRIVATE --> WSEED --> CREATE
+    WMEDIA --> WSEED
+    WMEDIA --> CREATE
+    CREATE --> FIRST --> OS
+    OS --> MI --> TUNE
+    MI --> MC --> KEYS
     MI --> MD
-    OS --> WI
-    OS --> LI
-    KEYS -->|private key transfer| WI
-    KEYS -->|private key transfer| LI
+    KEYS --> AGENTS
+    OS --> AGENTS
+    AGENTS -->|key delivered, then deleted from the host| WI
+    AGENTS -->|key delivered, then deleted from the host| LI
     WI --> READY
     LI --> READY
     READY --> ENABLE --> OPERATE
     MD --> OPERATE
-    MI -.-> RET
-    classDef pending fill:#fff3db,stroke:#a66516,color:#533600
     classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29
-    class PRIVATE,KEYS store
+    class PRIVATE,KEYS,CONFIG,CLOUDIMG store
