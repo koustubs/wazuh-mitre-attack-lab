@@ -1,57 +1,190 @@
 #requires -Version 5.1
 #requires -RunAsAdministrator
+<#
+    Creates the lab network and the profile's virtual machines, and attaches everything they
+    boot from.
+
+    Nothing here installs an operating system. The Ubuntu guests boot their own copy of the
+    cloud image Get-LabImage.ps1 prepared, and cloud-init configures them from the seed
+    New-LabSeeds.ps1 built, on their first boot. The Windows endpoint, which the full profile
+    includes and the lean one does not, still boots an installer, driven by the unattend seed
+    from New-WindowsSeed.ps1.
+
+    This checks the handful of things it is about to depend on and refuses on those.
+    Test-LabHost.ps1 is what tells you whether the machine can host the lab at all; run it
+    first.
+
+        .\New-Lab.ps1
+        .\New-Lab.ps1 -Profile lean
+        .\New-Lab.ps1 -WindowsIso D:\iso\Win11_Enterprise_Eval.iso
+#>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][string]$UbuntuIso,
-    [Parameter(Mandatory)][string]$WindowsIso,
-    [string]$StorageRoot = 'D:\Wazuh-Lab'
+    [ValidateSet('lean', 'full')][string]$Profile,
+    [ValidateSet('hyperv', 'virtualbox')][string]$Backend,
+    # Only the full profile needs one, because only it builds a Windows endpoint. The free
+    # Windows 11 Enterprise evaluation image works and needs no product key; docs\setup.md says
+    # where to get it.
+    [string]$WindowsIso,
+    [string]$StorageRoot
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-Import-Module Hyper-V
-foreach ($iso in @($UbuntuIso, $WindowsIso)) {
-    if (-not (Test-Path -LiteralPath $iso -PathType Leaf) -or [IO.Path]::GetExtension($iso) -ine '.iso') { throw "Missing installation ISO: $iso" }
+. (Join-Path $PSScriptRoot 'LabBackend.ps1')
+
+$config = if ($Profile) { Get-LabConfig -Profile $Profile } else { Get-LabConfig }
+$vms    = if ($Profile) { Get-LabVms -Profile $Profile }    else { Get-LabVms }
+$budget = if ($Profile) { Get-LabBudget -Profile $Profile }  else { Get-LabBudget }
+if (-not $Backend) { $Backend = $config.backend }
+Import-LabBackend -Backend $Backend | Out-Null
+
+if (-not $StorageRoot) { $StorageRoot = $config.storageRoot }
+$root = [IO.Path]::GetFullPath(($StorageRoot -replace '/', '\')).TrimEnd('\')
+if ($root -notmatch '^[A-Za-z]:\\[^\\]+') {
+    throw "storageRoot has to be a directory on a drive, not a drive root. Got: $root"
 }
-$root = [IO.Path]::GetFullPath($StorageRoot).TrimEnd('\')
-if ($root -notmatch '^[A-Za-z]:\\[^\\]+') { throw 'Use a dedicated directory, not a drive root.' }
-if (Test-Path -LiteralPath $root) { throw "Storage directory already exists: $root. Review it before provisioning." }
-$drive = Get-PSDrive -Name $root.Substring(0, 1)
-if ($drive.Free -lt 220GB) { throw 'Allow at least 220 GiB of free space for VM disks and checkpoints.' }
-$specs = @(
-    @{ Name='WAZUH-MANAGER'; Ram=8GB; Cpu=4; Disk=80GB; Iso=$UbuntuIso; Windows=$false },
-    @{ Name='WAZUH-WIN'; Ram=6GB; Cpu=4; Disk=80GB; Iso=$WindowsIso; Windows=$true },
-    @{ Name='WAZUH-LINUX'; Ram=2GB; Cpu=2; Disk=24GB; Iso=$UbuntuIso; Windows=$false }
-)
-foreach ($spec in $specs) { if (Get-VM -Name $spec.Name -ErrorAction SilentlyContinue) { throw "VM already exists: $($spec.Name)" } }
-if (Get-VMSwitch -Name 'Wazuh-Lab' -ErrorAction SilentlyContinue) { throw 'The Wazuh-Lab switch already exists.' }
-# WinNAT can conflict with an existing NAT. Never replace another lab's network.
-if (@(Get-NetNat).Count -gt 0) { throw 'An existing WinNAT network needs review before adding this lab.' }
-if (@(Get-NetRoute -AddressFamily IPv4 | Where-Object { $_.DestinationPrefix -like '172.29.70.*' }).Count) { throw 'The proposed lab subnet is already routed.' }
-New-Item -ItemType Directory -Path $root | Out-Null
-New-VMSwitch -Name 'Wazuh-Lab' -SwitchType Internal | Out-Null
-$adapter = Get-NetAdapter -Name 'vEthernet (Wazuh-Lab)'
-New-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress '172.29.70.1' -PrefixLength 24 | Out-Null
-New-NetNat -Name 'Wazuh-Lab' -InternalIPInterfaceAddressPrefix '172.29.70.0/24' | Out-Null
-foreach ($spec in $specs) {
-    $vmDir = Join-Path $root $spec.Name
-    New-Item -ItemType Directory -Path $vmDir | Out-Null
-    $vmOptions = @{
-        Name = $spec.Name; Generation = 2; MemoryStartupBytes = $spec.Ram; Path = $vmDir
-        NewVHDPath = (Join-Path $vmDir ($spec.Name + '.vhdx'))
-        NewVHDSizeBytes = $spec.Disk; SwitchName = 'Wazuh-Lab'
+
+$net = $config.network
+$seeds = Get-LabPath Seeds
+$bootImage = Join-Path (Get-LabPath Images) ('ubuntu-cloudimg' + (Get-LabBootDiskExtension))
+
+# ---- everything this is about to depend on, reported together ----------------------------------
+#
+# Collected rather than thrown one at a time. Being told about the missing image, then about the
+# missing seeds, then about the missing ISO, one run each, is three rebuilds of nothing.
+
+$problems = @()
+
+foreach ($name in $vms.Keys) {
+    $existingDir = Join-Path $root $name
+    if (Get-LabVmInfo -Name $name) {
+        # Its directory is almost certainly there too. Saying so as well would be one more line
+        # about the same VM, and the fix for both is the same.
+        $problems += "A VM called $name already exists. Remove it with setup\Remove-Lab.ps1, or rename it."
+    } elseif (Test-Path -LiteralPath $existingDir) {
+        $problems += "$existingDir already holds something, though no VM uses it. Review it before this writes a disk there."
     }
-    $vm = New-VM @vmOptions
-    Set-VMProcessor -VM $vm -Count $spec.Cpu
-    Set-VM -VM $vm -AutomaticStartAction Nothing -AutomaticStopAction ShutDown -CheckpointType Standard
-    Set-VMMemory -VM $vm -DynamicMemoryEnabled $false
-    if ($spec.Windows) {
-        Set-VMKeyProtector -VM $vm -NewLocalKeyProtector
-        Enable-VMTPM -VM $vm
-        Set-VMFirmware -VM $vm -EnableSecureBoot On -SecureBootTemplate MicrosoftWindows
+}
+
+$netInfo = Get-LabNetworkInfo -NetworkName $net.name -Subnet $net.subnet -Gateway $net.gateway
+$networkExists = $netInfo.SwitchPresent -and $netInfo.NatPresent
+if (-not $networkExists) {
+    if ($netInfo.SwitchPresent -or $netInfo.NatPresent) {
+        $halfBuilt = 'Half the lab network is there: {0} {1}, {2} {3}. Clear it with setup\Remove-Lab.ps1 and let this build both.'
+        $problems += ($halfBuilt -f
+            $netInfo.SwitchKind, $(if ($netInfo.SwitchPresent) { 'present' } else { 'missing' }),
+            $netInfo.NatKind,    $(if ($netInfo.NatPresent)    { 'present' } else { 'missing' }))
     } else {
-        Set-VMFirmware -VM $vm -EnableSecureBoot On -SecureBootTemplate MicrosoftUEFICertificateAuthority
+        $problems += Test-LabNetworkConflict -NetworkName $net.name -Subnet $net.subnet -Gateway $net.gateway
     }
-    $dvd = Add-VMDvdDrive -VM $vm -Path $spec.Iso -Passthru
-    Set-VMFirmware -VM $vm -FirstBootDevice $dvd
 }
-Write-Output 'Three VM definitions created. Install the operating systems using the deployment guide.'
+
+$ubuntuCount = @($vms.Values | Where-Object { $_.Os -eq 'ubuntu' }).Count
+if ($ubuntuCount -gt 0 -and -not (Test-Path -LiteralPath $bootImage)) {
+    $problems += "No prepared Ubuntu image at $bootImage. Run setup\Get-LabImage.ps1."
+}
+foreach ($vm in $vms.Values) {
+    if ($vm.Os -ne 'ubuntu') { continue }
+    $seed = Join-Path $seeds ($vm.Hostname + '-seed.iso')
+    if (-not (Test-Path -LiteralPath $seed)) {
+        $problems += "No cloud-init seed for $($vm.Name) at $seed. Run setup\New-LabSeeds.ps1."
+    }
+}
+
+$windowsCount = @($vms.Values | Where-Object { $_.Os -eq 'windows' }).Count
+$unattend = Join-Path $seeds 'windows-unattend.iso'
+if ($windowsCount -gt 0) {
+    if (-not $WindowsIso) {
+        $problems += "The $($config.profile) profile includes a Windows endpoint, so it needs -WindowsIso. Run with -Profile lean to build the lab without one."
+    } elseif (-not (Test-Path -LiteralPath $WindowsIso -PathType Leaf)) {
+        $problems += "No Windows installation ISO at $WindowsIso."
+    }
+    if (-not (Test-Path -LiteralPath $unattend)) {
+        $problems += "No unattend seed at $unattend. Run setup\New-WindowsSeed.ps1."
+    }
+}
+
+# Disks expand as they are written, so this is the worst case rather than day one. It is still
+# the number to check: running out of room part way through a disk write corrupts the guest.
+$driveLetter = $root.Substring(0, 2)
+$disk = Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='{0}'" -f $driveLetter) -ErrorAction SilentlyContinue
+if ($disk) {
+    $freeGb = [math]::Round($disk.FreeSpace / 1GB, 1)
+    if ($freeGb -lt $budget.DiskWithHeadroomGb) {
+        $tooSmall = 'The {0} profile wants {1} GB on {2} at worst case and there is {3} GB. Use -Profile lean, or point storageRoot in lab.config.json at another drive.'
+        $problems += ($tooSmall -f $config.profile, $budget.DiskWithHeadroomGb, $driveLetter, $freeGb)
+    }
+}
+
+if ($problems.Count -gt 0) {
+    Write-Host ''
+    Write-Host 'This machine is not ready to build the lab:' -ForegroundColor Red
+    foreach ($problem in $problems) { Write-Host ("  - {0}" -f $problem) }
+    Write-Host ''
+    exit 1
+}
+
+# ---- build -------------------------------------------------------------------------------------
+
+Write-Host ("Building the {0} profile on {1}: {2} VMs, {3} GB of memory at startup, up to {4} GB of disk." -f
+    $config.profile, $Backend, $budget.VmCount, $budget.MemoryGb, $budget.DiskGb)
+
+if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Path $root | Out-Null }
+
+if ($networkExists) {
+    Write-Host ("  network {0}, already present, reused" -f $net.name)
+} else {
+    Write-Host ("  network {0}: {1}, gateway {2}" -f $net.name, $net.subnet, $net.gateway)
+    New-LabNetwork -NetworkName $net.name -Subnet $net.subnet -Gateway $net.gateway -PrefixLength $net.prefixLength
+}
+
+foreach ($name in $vms.Keys) {
+    $vm = $vms[$name]
+    $vmDir = Join-Path $root $name
+    Write-Host ("  {0,-14} {1} MB, {2} vCPU, {3} GB, {4}" -f $name, $vm.MemoryMb, $vm.Cpu, $vm.DiskGb, $vm.Address)
+    New-Item -ItemType Directory -Path $vmDir -Force | Out-Null
+
+    $bootDisk = ''
+    if ($vm.Os -eq 'ubuntu') {
+        $bootDisk = Join-Path $vmDir ($name + (Get-LabBootDiskExtension))
+        Write-Host '                 copying the prepared image'
+        Copy-LabBootDisk -Source $bootImage -Destination $bootDisk
+        # Grown here rather than inside the guest. The image declares about 3.5 GB and
+        # cloud-init's growpart extends the root partition to fill whatever it is handed, so the
+        # disk has to be the profile's size before the guest boots for the first time.
+        Resize-LabVmDisk -Path $bootDisk -SizeGb $vm.DiskGb
+    }
+
+    New-LabVm -Name $name -Directory $vmDir -NetworkName $net.name `
+        -MemoryMb $vm.MemoryMb -MinMemoryMb $vm.MinMemoryMb -MaxMemoryMb $vm.MaxMemoryMb `
+        -Cpu $vm.Cpu -DiskGb $vm.DiskGb -Os $vm.Os -Gateway $net.gateway `
+        -BootDiskPath $bootDisk -MacAddress (Get-LabMacAddress -Address $vm.Address) | Out-Null
+
+    if ($vm.Os -eq 'ubuntu') {
+        # No -FirstBoot. The seed carries no boot record, so the firmware skips it and falls
+        # through to the disk, which is what should happen on every boot and not only the first.
+        Add-LabVmDvd -Name $name -Path (Join-Path $seeds ($vm.Hostname + '-seed.iso')) | Out-Null
+    } else {
+        Add-LabVmDvd -Name $name -Path $WindowsIso -FirstBoot | Out-Null
+        Add-LabVmDvd -Name $name -Path $unattend | Out-Null
+    }
+
+    Set-LabVmNoAutostart -Name $name
+}
+
+$manager = $vms['WAZUH-MANAGER']
+$keyPath = Join-Path (Get-LabPath Secrets) 'lab_ed25519'
+
+Write-Host ''
+Write-Host ("The {0} profile is built under {1}." -f $config.profile, $root) -ForegroundColor Green
+Write-Host 'Nothing is running and nothing starts with the host. Next:'
+Write-Host ''
+Write-Host ("  1. Start {0} and give cloud-init a minute or two on its first boot." -f $manager.Name)
+Write-Host "     Either the dashboard's power buttons, or your hypervisor's own console."
+Write-Host ("  2. ssh -i {0} {1}@{2}" -f $keyPath, $config.guest.user, $manager.Address)
+Write-Host '  3. Copy manager\install-manager.sh over and run it with sudo.'
+if ($windowsCount -gt 0) {
+    Write-Host '  4. The Windows endpoint installs itself from the unattend seed. It reboots twice.'
+}
+Write-Host ''
+Write-Host 'Teardown, when you are done: setup\Remove-Lab.ps1'

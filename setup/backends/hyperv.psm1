@@ -218,7 +218,12 @@ function New-LabVm {
         [Parameter(Mandatory)][string]$Gateway,
         # An existing disk to boot from, for the Ubuntu cloud image. Without it an empty disk of
         # DiskGb is created instead, which is what the Windows endpoint needs.
-        [string]$BootDiskPath
+        [string]$BootDiskPath,
+        # Twelve hex digits from Get-LabMacAddress. VirtualBox needs it to tell the guest which
+        # of its two adapters is the lab one. A Hyper-V guest has one adapter and could manage
+        # without, but it is set here too so that the guest-side configuration is the same on
+        # both backends, and so a rebuilt VM keeps the address it had.
+        [string]$MacAddress
     )
 
     if (-not (Test-Path -LiteralPath $Directory)) { New-Item -ItemType Directory -Path $Directory | Out-Null }
@@ -241,6 +246,7 @@ function New-LabVm {
 
     Set-VMProcessor -VM $vm -Count $Cpu
     Set-VM -VM $vm -AutomaticStartAction Nothing -AutomaticStopAction ShutDown -CheckpointType Standard
+    if ($MacAddress) { Set-VMNetworkAdapter -VM $vm -StaticMacAddress $MacAddress }
 
     # Dynamic memory on, reversing the original. A guest that is idle hands its pages back, which
     # is the difference between the full profile fitting a 16 GB host and not. The minimum is the
@@ -300,6 +306,36 @@ function Resize-LabVmDisk {
     if ($current -lt ($SizeGb * 1GB)) { Resize-VHD -Path $Path -SizeBytes ($SizeGb * 1GB) }
 }
 
+function ConvertTo-LabBootDisk {
+    <#
+        Turns the unpacked cloud image into the disk format this backend boots, at a path of the
+        caller's choosing.
+
+        The Azure variant ships as a fixed-size VHD, which is its full declared size on disk from
+        the first byte. Converting to a dynamic VHDX costs one pass and about 3 GB less cache.
+    #>
+    param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Destination)
+
+    # A function in a module does not inherit the calling script's $ErrorActionPreference, so
+    # without this line a failed conversion is a non-terminating error the caller never sees.
+    # It cost a deleted source image to find that out.
+    $ErrorActionPreference = 'Stop'
+
+    if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Force }
+    Convert-VHD -Path $Source -DestinationPath $Destination -VHDType Dynamic
+    if (-not (Test-Path -LiteralPath $Destination)) {
+        throw "Convert-VHD reported no error but produced nothing at $Destination."
+    }
+}
+
+function Copy-LabBootDisk {
+    <# One guest's own copy of the prepared image, so the cached one is never written to. #>
+    param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Destination)
+    Copy-Item -LiteralPath $Source -Destination $Destination -Force
+}
+
+function Get-LabBootDiskExtension { '.vhdx' }
+
 function Remove-LabVm {
     <#
         Removes the definition, and the disks only when asked. A teardown that silently deleted
@@ -323,4 +359,5 @@ function Remove-LabVm {
 
 Export-ModuleMember -Function Test-LabBackendAvailable, Get-LabVmInfo, Invoke-LabVmAction,
     Set-LabVmNoAutostart, Get-LabNetworkInfo, New-LabNetwork, Remove-LabNetwork,
-    Test-LabNetworkConflict, New-LabVm, Add-LabVmDvd, Add-LabVmDisk, Resize-LabVmDisk, Remove-LabVm
+    Test-LabNetworkConflict, New-LabVm, Add-LabVmDvd, Add-LabVmDisk, Resize-LabVmDisk,
+    ConvertTo-LabBootDisk, Copy-LabBootDisk, Get-LabBootDiskExtension, Remove-LabVm

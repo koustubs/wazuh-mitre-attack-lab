@@ -1,121 +1,174 @@
 #requires -Version 5.1
 <#
-Builds cloud-init seed images for the two Ubuntu lab VMs.
+    Builds the cloud-init seed for each Ubuntu guest the profile includes.
 
-Each image is a small ISO labelled CIDATA. Cloud-init finds it by that label, so it does not
-matter which drive letter it lands on. The installer still needs "autoinstall" on the kernel
-command line, which Start-LabInstall.ps1 supplies at the boot menu.
+    Each seed is a small ISO labelled CIDATA holding three files. Cloud-init finds it by that
+    label, so it does not matter which drive it lands on:
+
+        user-data       the account, the SSH key, the hostname, the lab env file
+        meta-data       the instance identity
+        network-config  netplan, written for whichever backend's adapter layout applies
+
+    This used to emit a subiquity autoinstall directive, which is a different thing: it drove
+    the Ubuntu server installer, and the installer had to be told to look for it by typing
+    "autoinstall" at the GRUB prompt. The guests boot a pre-installed cloud image now, so this
+    is plain cloud-init configuring a system that already exists.
+
+    Nothing here is committed. The seeds carry the console password hash and the public key, and
+    .lab-secrets is gitignored.
+
+        .\New-LabSeeds.ps1
 #>
 [CmdletBinding()]
 param(
-    [string]$SecretsPath = (Join-Path $PSScriptRoot '.lab-secrets'),
-    [string]$OutputPath = (Join-Path $PSScriptRoot '.lab-secrets\seeds')
+    [ValidateSet('lean', 'full')][string]$Profile,
+    [ValidateSet('hyperv', 'virtualbox')][string]$Backend,
+    [string]$OutputPath
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'LabConfig.ps1')
+. (Join-Path $PSScriptRoot 'LabIso.ps1')
 
-$publicKey = (Get-Content (Join-Path $SecretsPath 'lab_ed25519.pub') -Raw).Trim()
-$passwordHash = (Get-Content (Join-Path $SecretsPath 'console-password.hash') -Raw).Trim()
-if (-not $publicKey.StartsWith('ssh-')) { throw 'Public key looks wrong.' }
-if (-not $passwordHash.StartsWith('$6$')) { throw 'Expected a SHA-512 crypt hash.' }
+$config = if ($Profile) { Get-LabConfig -Profile $Profile } else { Get-LabConfig }
+$vms    = if ($Profile) { Get-LabVms -Profile $Profile }    else { Get-LabVms }
+if (-not $Backend) { $Backend = $config.backend }
+if (-not $OutputPath) { $OutputPath = Get-LabPath Seeds }
 
-if (-not ('LabIso' -as [type])) {
-    Add-Type -TypeDefinition @'
-using System;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.ComTypes;
-public static class LabIso {
-    public static void Write(object image, string path) {
-        IStream stream = (IStream)image;
-        using (FileStream file = File.Create(path)) {
-            byte[] buffer = new byte[2048];
-            IntPtr read = Marshal.AllocHGlobal(4);
-            try {
-                int count;
-                do {
-                    stream.Read(buffer, buffer.Length, read);
-                    count = Marshal.ReadInt32(read);
-                    if (count > 0) { file.Write(buffer, 0, count); }
-                } while (count == buffer.Length);
-            } finally { Marshal.FreeHGlobal(read); }
-        }
-    }
-}
-'@
-}
+$secrets = Get-LabPath Secrets
+$publicKey = (Get-Content -LiteralPath (Join-Path $secrets 'lab_ed25519.pub') -Raw).Trim()
+$passwordHash = (Get-Content -LiteralPath (Join-Path $secrets 'console-password.hash') -Raw).Trim()
+if (-not $publicKey.StartsWith('ssh-')) { throw 'The public key in .lab-secrets does not look like one. Run New-LabSecrets.ps1.' }
+if (-not $passwordHash.StartsWith('$6$')) { throw 'Expected a SHA-512 crypt hash in console-password.hash. Run New-LabSecrets.ps1.' }
 
-function New-CidataIso {
-    param([string]$SourceDirectory, [string]$IsoPath)
-    $image = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
-    # ISO9660 plus Joliet. Cloud-init only needs the volume label and two files.
-    $image.FileSystemsToCreate = 3
-    $image.VolumeName = 'CIDATA'
-    $image.Root.AddTree($SourceDirectory, $false)
-    $result = $image.CreateResultImage()
-    [LabIso]::Write($result.ImageStream, $IsoPath)
-    [void][Runtime.InteropServices.Marshal]::ReleaseComObject($image)
-}
+# The same values the guest scripts source, generated once and carried into each seed rather
+# than written a second time here.
+$envFile = Join-Path ([IO.Path]::GetTempPath()) ('lab-env-' + [guid]::NewGuid().ToString('N') + '.env')
+& (Join-Path $PSScriptRoot 'Write-GuestConfig.ps1') -Profile $config.profile -Path $envFile | Out-Null
+$labEnv = Get-Content -LiteralPath $envFile -Raw
+Remove-Item -LiteralPath $envFile -Force
 
-$hosts = @(
-    @{ Name = 'wazuh-manager'; Address = '172.29.70.10' },
-    @{ Name = 'wazuh-linux';   Address = '172.29.70.30' }
-)
+$network = $config.network
+$dns = ($network.dns -join ', ')
 
 New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
-foreach ($entry in $hosts) {
-    $staging = Join-Path ([IO.Path]::GetTempPath()) ('labseed-' + $entry.Name)
-    if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
+
+foreach ($name in $vms.Keys) {
+    $vm = $vms[$name]
+    if ($vm.Os -ne 'ubuntu') { continue }
+
+    $staging = Join-Path ([IO.Path]::GetTempPath()) ('labseed-' + $vm.Hostname)
+    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
     New-Item -ItemType Directory -Path $staging | Out-Null
 
-    # Written with LF endings. Cloud-init parses this as YAML and CRLF breaks the block scalars.
+    # ---- network-config -----------------------------------------------------------------
+    if ($Backend -eq 'virtualbox') {
+        $mac = (Get-LabMacAddress -Address $vm.Address -Separator ':').ToLower()
+        $networkConfig = @"
+version: 2
+ethernets:
+  outbound:
+    match:
+      name: "e*"
+    dhcp4: true
+    dhcp4-overrides:
+      use-dns: false
+    nameservers:
+      addresses: [$dns]
+  labnet:
+    match:
+      macaddress: "$mac"
+    dhcp4: false
+    addresses:
+      - $($vm.Address)/$($network.prefixLength)
+"@
+    } else {
+        $networkConfig = @"
+version: 2
+ethernets:
+  labnet:
+    match:
+      name: "e*"
+    dhcp4: false
+    addresses:
+      - $($vm.Address)/$($network.prefixLength)
+    routes:
+      - to: default
+        via: $($network.gateway)
+    nameservers:
+      addresses: [$dns]
+"@
+    }
+
+    # ---- user-data ----------------------------------------------------------------------
+    # The image's own cloud.cfg names "ubuntu" as its default user. Listing users: here without
+    # "- default" means cloud-init never creates it, which is the intent: a well known account
+    # name on a lab that exists to detect brute force attempts is not something to leave
+    # running. The runcmd below locks it anyway, for the case where a future image creates the
+    # account somewhere other than cloud-init's default_user.
+    $indentedEnv = (($labEnv -split "`n" | ForEach-Object { '      ' + $_ }) -join "`n").TrimEnd()
     $userData = @"
 #cloud-config
-autoinstall:
-  version: 1
-  locale: en_US.UTF-8
-  keyboard:
-    layout: us
-  identity:
-    hostname: $($entry.Name)
-    username: labadmin
-    password: "$passwordHash"
-  ssh:
-    install-server: true
-    allow-pw: false
-    authorized-keys:
-      - "$publicKey"
-  network:
-    version: 2
-    ethernets:
-      labnet:
-        match:
-          name: "e*"
-        addresses:
-          - $($entry.Address)/24
-        routes:
-          - to: default
-            via: 172.29.70.1
-        nameservers:
-          addresses: [1.1.1.1, 8.8.8.8]
-  storage:
-    layout:
-      name: direct
-  packages:
-    - openssh-server
-  shutdown: poweroff
-"@
-    $metaData = @"
-instance-id: $($entry.Name)-01
-local-hostname: $($entry.Name)
-"@
-    $lf = New-Object Text.UTF8Encoding($false)
-    [IO.File]::WriteAllText((Join-Path $staging 'user-data'), ($userData -replace "`r`n", "`n"), $lf)
-    [IO.File]::WriteAllText((Join-Path $staging 'meta-data'), ($metaData -replace "`r`n", "`n"), $lf)
+hostname: $($vm.Hostname)
+fqdn: $($vm.Hostname)
+prefer_fqdn_over_hostname: false
+locale: $($config.guest.locale)
+timezone: $($config.guest.timezone)
 
-    $iso = Join-Path $OutputPath ($entry.Name + '-seed.iso')
-    if (Test-Path $iso) { Remove-Item $iso -Force }
-    New-CidataIso -SourceDirectory $staging -IsoPath $iso
-    Remove-Item $staging -Recurse -Force
-    Write-Output ("{0} -> {1} bytes" -f (Split-Path $iso -Leaf), (Get-Item $iso).Length)
+users:
+  - name: $($config.guest.user)
+    gecos: Wazuh lab account
+    groups: [adm, sudo]
+    shell: /bin/bash
+    lock_passwd: false
+    passwd: "$passwordHash"
+    sudo: ALL=(ALL) ALL
+    ssh_authorized_keys:
+      - "$publicKey"
+
+# Password login over SSH stays off. The console password exists so the VM window is usable
+# when the network is the thing that is broken, which is exactly when SSH is not an option.
+ssh_pwauth: false
+disable_root: true
+
+write_files:
+  - path: /etc/wazuh-lab/lab.env
+    owner: root:root
+    permissions: "0644"
+    content: |
+$indentedEnv
+
+package_update: true
+packages:
+  - openssh-server
+  - curl
+  - ca-certificates
+
+runcmd:
+  - [ sh, -c, "id ubuntu >/dev/null 2>&1 && usermod -L ubuntu || true" ]
+  - [ systemctl, enable, --now, ssh ]
+
+final_message: "cloud-init finished after `$UPTIME seconds. The lab account and its key are in place."
+"@
+
+    $metaData = @"
+instance-id: $($vm.Hostname)-01
+local-hostname: $($vm.Hostname)
+"@
+
+    Write-LabLfFile -Path (Join-Path $staging 'user-data') -Content $userData
+    Write-LabLfFile -Path (Join-Path $staging 'meta-data') -Content $metaData
+    Write-LabLfFile -Path (Join-Path $staging 'network-config') -Content $networkConfig
+
+    $iso = Join-Path $OutputPath ($vm.Hostname + '-seed.iso')
+    New-LabDataIso -SourceDirectory $staging -IsoPath $iso -VolumeName 'CIDATA'
+    Remove-Item -LiteralPath $staging -Recurse -Force
+    Write-Output ("{0,-24} {1,6} bytes  {2}" -f (Split-Path $iso -Leaf), (Get-Item -LiteralPath $iso).Length, $vm.Address)
 }
+
+Write-Output ''
+Write-Output ("Seeds for the {0} profile on {1}, in {2}" -f $config.profile, $Backend, $OutputPath)
+if ($vms.Contains('WAZUH-WIN')) {
+    Write-Output 'The Windows endpoint has its own seed: setup\New-WindowsSeed.ps1'
+}
+Write-Output 'Next: setup\New-Lab.ps1'

@@ -332,7 +332,11 @@ function New-LabVm {
         # Needed to name the host-only adapter NIC2 attaches to. Hyper-V takes the same
         # parameter and ignores it, so one call site serves both backends.
         [Parameter(Mandatory)][string]$Gateway,
-        [string]$BootDiskPath
+        [string]$BootDiskPath,
+        # Twelve hex digits from Get-LabMacAddress, applied to NIC2. Without it the guest has no
+        # way to tell its two adapters apart: interface names come from PCI slot ordering the
+        # guest decides, so netplan and Get-NetAdapter both match on this instead.
+        [string]$MacAddress
     )
 
     $hostOnly = Get-LabHostOnlyAdapter -Gateway $Gateway
@@ -363,6 +367,7 @@ function New-LabVm {
         '--nic1', 'natnetwork', '--nat-network1', $NetworkName,
         '--nic2', 'hostonly', '--host-only-adapter2', $hostOnly
     )
+    if ($MacAddress) { $modify += @('--macaddress2', $MacAddress) }
     Invoke-VBox -ThrowOnError -Arguments $modify | Out-Null
 
     if ($Os -eq 'windows') {
@@ -438,6 +443,29 @@ function Resize-LabVmDisk {
     Invoke-VBox -ThrowOnError -Arguments @('modifymedium', 'disk', $Path, '--resize', "$($SizeGb * 1024)") | Out-Null
 }
 
+function ConvertTo-LabBootDisk {
+    <#
+        The published VMDK is stream-optimised, which VirtualBox boots but will not resize.
+        Cloning it to a VDI once makes every guest's copy growable to the profile's disk size.
+    #>
+    param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Destination)
+    if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Force }
+    Invoke-VBox -ThrowOnError -Arguments @('clonemedium', 'disk', $Source, $Destination, '--format', 'VDI') | Out-Null
+}
+
+function Copy-LabBootDisk {
+    <#
+        One guest's own copy. Not Copy-Item: VirtualBox keys registered media by a UUID stored
+        inside the file, so a byte copy would collide with the original the first time both were
+        attached. clonemedium writes a new UUID.
+    #>
+    param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Destination)
+    if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Force }
+    Invoke-VBox -ThrowOnError -Arguments @('clonemedium', 'disk', $Source, $Destination, '--format', 'VDI') | Out-Null
+}
+
+function Get-LabBootDiskExtension { '.vdi' }
+
 function Remove-LabVm {
     param([Parameter(Mandatory)][string]$Name, [switch]$DeleteDisks)
 
@@ -457,4 +485,5 @@ function Remove-LabVm {
 
 Export-ModuleMember -Function Test-LabBackendAvailable, Get-LabVmInfo, Invoke-LabVmAction,
     Set-LabVmNoAutostart, Get-LabNetworkInfo, New-LabNetwork, Remove-LabNetwork,
-    Test-LabNetworkConflict, New-LabVm, Add-LabVmDvd, Add-LabVmDisk, Resize-LabVmDisk, Remove-LabVm
+    Test-LabNetworkConflict, New-LabVm, Add-LabVmDvd, Add-LabVmDisk, Resize-LabVmDisk,
+    ConvertTo-LabBootDisk, Copy-LabBootDisk, Get-LabBootDiskExtension, Remove-LabVm

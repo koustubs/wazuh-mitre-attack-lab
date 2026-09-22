@@ -142,6 +142,35 @@ function Get-LabBudget {
     }
 }
 
+function Get-LabMacAddress {
+    <#
+        The MAC for the adapter carrying a guest's lab address, derived from the address itself.
+
+        VirtualBox needs this. Its guests have two adapters, one for the internet and one for
+        the lab, and neither netplan nor Get-NetAdapter has a way to say "the second one":
+        interface names depend on PCI slot ordering the guest decides. Matching on a MAC the
+        host chose is the only way to be certain which adapter gets the static address. Hyper-V
+        guests have one adapter and do not need it, but they are given the same one anyway, so
+        that a guest configuration file does not have to know which backend built it.
+
+        080027 is Oracle's OUI, so the address stays inside the range VirtualBox itself uses.
+        The last three bytes are the last three octets of the lab address, which makes it unique
+        per guest and readable in a packet capture.
+
+        .PARAMETER Separator
+        Empty for VirtualBox, which takes twelve bare hex digits. ':' for netplan, '-' for
+        Get-NetAdapter and Hyper-V.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Address,
+        [ValidateSet('', ':', '-')][string]$Separator = ''
+    )
+    $octets = $Address.Split('.')
+    $bare = '080027{0:X2}{1:X2}{2:X2}' -f [int]$octets[1], [int]$octets[2], [int]$octets[3]
+    if (-not $Separator) { return $bare }
+    return (($bare -split '(..)' | Where-Object { $_ }) -join $Separator)
+}
+
 function Get-LabNullDevice {
     <#
         The platform's bit bucket. Written as the literal NUL in four places, which is correct on
@@ -183,7 +212,7 @@ function Get-LabPath {
         Paths that more than one script needs, resolved from the root rather than from wherever
         the caller happens to be.
     #>
-    param([Parameter(Mandatory)][ValidateSet('Secrets', 'Seeds', 'Evidence', 'Findings', 'Cache', 'Scorer', 'Config')][string]$Name)
+    param([Parameter(Mandatory)][ValidateSet('Secrets', 'Seeds', 'Evidence', 'Findings', 'Cache', 'Images', 'Scorer', 'Config')][string]$Name)
 
     $root = Get-LabRoot
     switch ($Name) {
@@ -192,6 +221,11 @@ function Get-LabPath {
         'Evidence' { Join-Path $root 'evidence' }
         'Findings' { Join-Path $root 'evidence\findings' }
         'Cache'    { Join-Path $root '.cache' }
+        # Not under the repository. Preparing the cloud image needs room for the unpacked
+        # 30 GB disk as well as the result, which is more than a clone should ever ask of the
+        # drive it happens to sit on. It belongs beside the VM disks, on the drive the profile
+        # was sized against and the one the preflight checks.
+        'Images'   { Join-Path ((Get-LabConfig).storageRoot -replace '/', '\') 'images' }
         'Scorer'   { Join-Path $root 'scoring\scorer' }
         'Config'   { Join-Path $root 'lab.config.json' }
     }

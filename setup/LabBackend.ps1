@@ -16,10 +16,13 @@
         New-LabNetwork       -NetworkName -Subnet -Gateway -PrefixLength
         Remove-LabNetwork    -NetworkName
         New-LabVm            -Name -Directory -NetworkName -MemoryMb -MinMemoryMb -MaxMemoryMb
-                             -Cpu -DiskGb -Os -Gateway [-BootDiskPath]
+                             -Cpu -DiskGb -Os -Gateway [-BootDiskPath] [-MacAddress]
         Add-LabVmDvd         -Name -Path [-FirstBoot]
         Add-LabVmDisk        -Name -Path -SizeGb
         Resize-LabVmDisk     -Path -SizeGb
+        ConvertTo-LabBootDisk -Source -Destination   the cloud image into a bootable disk
+        Copy-LabBootDisk      -Source -Destination   one guest's own copy of it
+        Get-LabBootDiskExtension                     '.vhdx' or '.vdi'
         Remove-LabVm         -Name [-DeleteDisks]
 
     Get-LabVmInfo returns:
