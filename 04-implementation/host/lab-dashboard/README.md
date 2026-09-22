@@ -273,11 +273,16 @@ than disappearing.
 A poll costs about 90 ms and runs every 3 seconds. It stops when the tab is hidden, so leaving
 this open in a background tab costs nothing. There is also a Pause button.
 
+The manager round trip is not on that cycle. It runs at most once every 10 seconds and the
+answer is cached in between, so roughly two polls in three pay nothing for it. Measured against
+the running lab, five consecutive calls: mean 253 ms, range 246 to 261, returning 26,559 bytes
+of JSON.
+
 Scoring rides inside that rather than beside it. It runs in the status script the manager was
 already being sent, so there is no second round trip, no service and no open port. Twelve windows
 of eleven features is a dot product and an exponential each: 4 ms for the manager's full 800
-record sample, measured on this host, and some multiple of that on a 2 vCPU guest, against an SSH
-round trip costing ten times more before any of it starts.
+record sample, measured on this host, and some multiple of that on a 2 vCPU guest, against the
+250 ms round trip that has to happen before any of it starts.
 
 That is the whole argument for the model that won. Shipping PyTorch to a box whose job is
 receiving alerts, to evaluate the model that lost on all eight folds, was never worth it.
@@ -319,6 +324,16 @@ with no setup step, and that changing what it reports is a change to this file a
 copy would have to be pushed out again every time and would go stale silently if it were not. It
 is base64 encoded because passing shell inline through PowerShell to ssh mangles quoting, which
 has already cost this project a corrupted file on the manager.
+
+It goes over **standard input**, not in the ssh command line. It used to go in the command line,
+and that worked until the scorer was folded into the script and took the payload to 34,644
+characters, past the 32,767 a Windows command line holds. `Start-Process` then threw "The
+filename or extension is too long", `Invoke-LabSsh` caught it and returned `$null`, and the page
+reported the manager as not answering over SSH. Because this one round trip carries the whole
+health payload, every panel went dead, not just the score, and nothing caught it because the
+scoring panel had only ever been tested offline. Anything whose size is not fixed goes over
+stdin now. `Invoke-LabSsh -StdinText` writes it to a temp file and hands that to
+`-RedirectStandardInput`, which keeps the same no-deadlock property the output redirections have.
 
 ## Security
 

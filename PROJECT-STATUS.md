@@ -387,7 +387,23 @@ wazuh-threat-detection/
 Alert sequence scoring went onto the dashboard on 21 September: the manager buckets its own
 recent alerts into five minute windows and scores each with the portable model, inside the
 SSH poll that was already happening. Verified offline against the substituted script, and in
-all three states the panel can be in. It has not yet been watched against a live scenario run.
+all three states the panel can be in.
+
+**Watched live on 22 September, and it found a bug first.** Against a running lab the page
+reported the manager as unreachable. The status script is sent base64 encoded, and folding
+the scorer into it took the payload to 34,644 characters, past the 32,767 a Windows command
+line holds. `Start-Process` threw, `Invoke-LabSsh` caught it and returned `$null`, and
+`Get-LabHealth` reported that as no answer over SSH. One round trip carries the whole health
+payload, so coverage, recent alerts, the manager log and agent state were dead too, not just
+the score. Offline testing never crosses a process boundary, so nothing caught it. The
+payload now goes over standard input and the ceiling is gone.
+
+With that fixed, S1 on WAZUH-LINUX: rule 100110 five times, then 100111 at level 10, and the
+window climbed to 100 while the burst ran. It closed at 99.9, critical, with the chain
+multiplier applied because 100112 created a local account in the same window. Base 76.84,
+times 1.30. The 90 second window before it scored 54.2 on boot noise alone, which is a fair
+illustration of what a 0.177 average precision model is and is not worth. Findings export
+produced a three page PDF of both.
 
 **Still open:**
 
@@ -403,9 +419,6 @@ all three states the panel can be in. It has not yet been watched against a live
   a prerequisite for anything.
 - `run-campaign.sh` is not in the dashboard's sudoers grant, so starting a campaign from the
   dashboard would prompt for a password. Everything else the dashboard needs is granted.
-- **The scoring panel has not been watched live.** It is verified against fabricated alerts
-  end to end, which is not the same as seeing the score move while an S1 burst runs. That is
-  ten minutes with both VMs up and it is the screenshot worth having.
 
 **From an external review, 21 September 2026.** An outside pass over the repository found
 five code issues that have not been fixed. None of them reverses the headline result that
