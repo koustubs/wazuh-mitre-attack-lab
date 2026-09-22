@@ -360,7 +360,7 @@ CREDS
 #
 # The caller computes those from the same code that scores the window, so the baseline cannot
 # drift away from the thing it is a baseline for. Nothing is recomputed here.
-import json, os, sys, tempfile
+import copy, json, os, sys, tempfile
 
 STATE = '/var/lib/wazuh-lab/baseline.json'
 # Roughly 24 hours of five minute windows. Long enough that one bad afternoon is a minority of
@@ -450,28 +450,39 @@ def fold(agent, observation):
 
 
 state = read_state()
-# Printed before anything is folded, which is the whole contract of this script.
-print(json.dumps(state))
-
 raw = ''
 if not sys.stdin.isatty():
     raw = sys.stdin.read(MAX_INPUT)
 if not raw.strip():
+    print(json.dumps(dict(state, supportsPreview=True)))
     sys.exit(0)
 try:
-    incoming = json.loads(raw).get('observations') or []
+    request = json.loads(raw)
+    incoming = request.get('observations') or []
+    preview = request.get('preview') is True
 except Exception:
     sys.stderr.write('stdin was not a JSON document with an observations list\n')
     sys.exit(2)
 
+if not preview:
+    # Existing callers receive the state before their persistent fold.
+    print(json.dumps(dict(state, supportsPreview=True)))
+snapshots = {}
 changed = False
 for observation in sorted(incoming, key=lambda o: int(o.get('epoch') or 0)):
     name = str(observation.get('agent') or '')
     if not name:
         continue
+    epoch = str(int(observation.get('epoch') or 0))
+    if preview and epoch not in snapshots:
+        snapshots[epoch] = copy.deepcopy(state['agents'])
     if fold(state['agents'].setdefault(name, blank()), observation):
         changed = True
-if changed:
+if preview:
+    # Displayed windows need earlier displayed windows as history, especially within the same
+    # hour. Previewing keeps that history chronological without persisting the scored window.
+    print(json.dumps({'preview': True, 'before': snapshots, 'agents': state['agents']}))
+elif changed:
     write_state(state)
 BASELINE
   chmod 0755 /usr/local/bin/lab-dashboard-baseline

@@ -781,12 +781,14 @@ function sourceLine(s) {
       <span class="mono">dashboard\\Enable-LabDashboard.ps1</span> against the manager.`);
   }
   const counts = Object.entries(base.windows || {});
-  if (base.note !== "ok") {
+  if (base.note === "preview-unavailable") {
+    parts.push(`Recent history could not be included; using stored baselines.`);
+  } else if (base.note !== "ok") {
     parts.push(`No baseline is being kept, so every denominator is the fixed one.`);
   } else if (!counts.length) {
-    parts.push(`The baseline is empty. It fills from windows once they scroll off this chart.`);
+    parts.push(`The baseline is empty. It fills from completed windows.`);
   } else {
-    parts.push(`Baseline: ` + counts.map(([k, v]) =>
+    parts.push(`History available to the newest window: ` + counts.map(([k, v]) =>
       `${esc(k)} ${v} window${v === 1 ? "" : "s"}`).join(", ") + `.`);
   }
   return parts.join(" ");

@@ -465,6 +465,8 @@ else:
         for name, share in _by_agent(buckets[lo]).items():
             observations.append(_observation(name, lo, share))
 
+    baseline_features = {}
+
     def _fold(obs):
         """Hand observations to the baseline and get back the baseline as it stood before
         them. An empty list reads without folding, which is how warmth is checked.
@@ -477,7 +479,9 @@ else:
         if rc_f != 0:
             return None
         try:
-            return (json.loads(text_f) or {}).get('agents') or {}
+            result = json.loads(text_f) or {}
+            baseline_features['preview'] = result.get('supportsPreview') is True
+            return result.get('agents') or {}
         except Exception:
             return False
 
@@ -554,11 +558,31 @@ else:
         else:
             baselines = opening
 
+    preview_before = {}
+    preview_latest = baselines
+    if baseline_features.get('preview'):
+        # One read-only preview produces each window's history before that window is added.
+        # The persistent fold still excludes the displayed range, so repeated polls cannot
+        # teach an earlier displayed window about its own activity or about later windows.
+        preview_obs = [_observation(name, lo, share) for lo in shown if lo != current
+                       for name, share in _by_agent(buckets[lo]).items()]
+        rc_p, text_p = run(['sudo', '-n', '/usr/local/bin/lab-dashboard-baseline'], 20,
+                          json.dumps({'preview': True, 'observations': preview_obs}))
+        try:
+            preview = json.loads(text_p) if rc_p == 0 else {}
+            if preview.get('preview') is not True:
+                raise ValueError('Preview unavailable')
+            preview_before = preview['before']
+            preview_latest = preview['agents']
+        except (ValueError, KeyError, TypeError):
+            baseline_note = 'preview-unavailable'
+
     wins = []
     for lo in shown:
         al = buckets[lo]
         p = score(_model, features(al))
-        sev = severity_by_agent(al, p, _model['threshold'], baselines,
+        window_baseline = preview_before.get(str(int(lo)), preview_latest if lo == current else baselines)
+        sev = severity_by_agent(al, p, _model['threshold'], window_baseline,
                                 datetime.datetime.utcfromtimestamp(lo).hour, _model)
         wins.append({
             'severity': sev['score'],
@@ -648,7 +672,7 @@ else:
             'warmed': warm_folded,
             'need': WARMUP_WINDOWS,
             'windows': dict((k, int((v or {}).get('windows') or 0))
-                            for k, v in baselines.items()),
+                            for k, v in preview_latest.items()),
         },
         'covers': {'from': datetime.datetime.utcfromtimestamp(span[0]).strftime('%H:%M'),
                    'windows': len(span)},
