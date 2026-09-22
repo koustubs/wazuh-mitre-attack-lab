@@ -89,6 +89,13 @@ for package in wazuh-manager wazuh-indexer wazuh-dashboard; do
     [[ $(dpkg-query -W -f='${Version}' "$package") == "$LAB_WAZUH_PKG_VERSION" ]] || { echo "Unexpected $package version." >&2; exit 1; }
 done
 apt-mark hold wazuh-manager wazuh-indexer wazuh-dashboard >>"$log" 2>&1
+# The .deb files apt downloaded to install all this. Measured at 1.6 GB on the lean profile,
+# against a 32 GB disk that was already 15 GB used when the install finished. They are of no
+# further use: the packages are installed and held, so nothing reinstalls from the cache, and
+# a reinstall would fetch them again anyway.
+before_kb=$(du -sx /var/cache/apt/archives 2>/dev/null | cut -f1 || echo 0)
+apt-get clean >>"$log" 2>&1
+echo "  reclaimed $(( before_kb / 1024 )) MB of downloaded packages"
 echo 'Wazuh installed. Credentials and installer logs are in /root/wazuh-lab-install.'
 
 # The installer accepts every default, which is not the right size for this guest and leaves
