@@ -14,12 +14,17 @@
       - downloads beside the target, never onto it, so an interrupted transfer cannot leave
         something that looks like a verified image
       - checks the hash, and deletes what does not match rather than keeping it
-      - unpacks and converts to whatever the backend boots
+      - converts it to whatever the backend boots
 
-    The download is about 580 MB. Preparing it needs roughly 36 GB free for a few minutes,
-    because the Hyper-V image unpacks to a 30 GB disk before it is compacted. Everything lands
-    under the storageRoot from lab.config.json, beside the VM disks rather than inside the
-    clone. Run it once.
+    The download is about 600 MB and preparing it needs roughly 10 GB free for a few minutes.
+    Everything lands under the storageRoot from lab.config.json, beside the VM disks rather
+    than inside the clone. Run it once.
+
+    Both backends take the same generic cloud image. Hyper-V cannot read its QCOW2 container,
+    so QcowImage.ps1 reads it here and writes the contents into a VHD. The obvious alternative,
+    Canonical's ready-made Azure VHD, is not usable: it pins itself to the Azure datasource and
+    ignores the NoCloud seed this lab hands it, so it boots with no address and no key. The
+    reasoning is in QcowImage.ps1.
 
         .\Get-LabImage.ps1
         .\Get-LabImage.ps1 -Force      Re-fetch even if the cache is already verified
@@ -33,6 +38,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'LabBackend.ps1')
+. (Join-Path $PSScriptRoot 'QcowImage.ps1')
 
 $config = Get-LabConfig
 if (-not $Backend) { $Backend = $config.backend }
@@ -100,9 +106,11 @@ function Assert-FixedVhd {
     <#
         The last 512 bytes of a VHD are its footer, and it records the disk's declared size.
 
-        Worth checking. The unpack below writes whatever tar sends to stdout, so this is what
-        would notice if the archive ever gained a second member, and it catches a short write
-        before Convert-VHD spends several minutes reading 30 GB to reach the same conclusion.
+        Worth checking even though this script creates the disk itself. The conversion writes
+        into the middle of that file at offsets it computes from the image, and the one mistake
+        that would not announce itself is a stray write past the end of the data and into the
+        footer. Reading the footer back is how that gets caught here rather than as an
+        unbootable guest twenty minutes later.
     #>
     param([string]$Path)
 
@@ -126,9 +134,9 @@ function Assert-FixedVhd {
     $declared = [BitConverter]::ToUInt64($sizeBytes, 0)
     $diskType = [BitConverter]::ToUInt32($typeBytes, 0)
 
-    if ($diskType -ne 2) { throw "Expected a fixed VHD in $name, found disk type $diskType." }
+    if ($diskType -ne 2) { throw "Expected a fixed VHD at $Path, found disk type $diskType." }
     if ($length -ne ($declared + 512)) {
-        throw ("{0} is {1} bytes but its footer declares {2}. The archive holds more than the one disk this expects." -f $Path, $length, ($declared + 512))
+        throw ("{0} is {1} bytes but its footer declares {2}." -f $Path, $length, ($declared + 512))
     }
 }
 
@@ -187,7 +195,7 @@ if ((Test-Path -LiteralPath $archive) -and -not $Force) {
     }
 }
 if (-not (Test-Path -LiteralPath $archive)) {
-    Get-RemoteFile -Url ($image.baseUrl + $name) -Target $archive -Label ('{0} (about {1} MB)' -f $name, 580)
+    Get-RemoteFile -Url ($image.baseUrl + $name) -Target $archive -Label ('{0} (about {1} MB)' -f $name, 600)
     $actual = Get-Sha256 $archive
     if ($actual -ne $expected) {
         Remove-Item -LiteralPath $archive -Force
@@ -196,14 +204,17 @@ if (-not (Test-Path -LiteralPath $archive)) {
 }
 Write-Host ("  verified {0}" -f $expected)
 
-# ---- unpack into something the backend boots ----------------------------------------------------
+# ---- convert into something the backend boots ----------------------------------------------------
 
 $prepared = $null
 if ($Backend -eq 'hyperv') {
-    # The Azure variant ships as a tar.gz around one fixed-size 30 GB VHD. Hyper-V boots that
-    # directly, but a fixed VHD is its full size on disk from the first byte, so it is converted
-    # once to a dynamic VHDX that every guest then copies. tar.exe has been in Windows since
-    # 10 1803.
+    # QCOW2 in, dynamic VHDX out, through a fixed VHD in the middle.
+    #
+    # The fixed VHD is the intermediate because it is the one format where a guest offset is a
+    # file offset, which is what lets the conversion write only the clusters the image actually
+    # allocates and leave the rest of the file as the zeros it was created with. A cloud image
+    # is mostly holes, so that is a few hundred MB written rather than the full virtual size.
+    # Convert-VHD then makes it dynamic, which is what each guest copies.
     $vhd = Join-Path $cache 'ubuntu-cloudimg.vhd'
     $prepared = Join-Path $cache 'ubuntu-cloudimg.vhdx'
 
@@ -211,24 +222,25 @@ if ($Backend -eq 'hyperv') {
         Write-Host ("Already prepared: {0}" -f $prepared)
     } else {
         if (Test-Path -LiteralPath $vhd) { Remove-Item -LiteralPath $vhd -Force }
-        Assert-FreeSpace -Path $cache -RequiredGb 36 -For 'Unpacking the cloud image'
 
-        Write-Host '  unpacking, about 30 GB and a few minutes...'
-        # Deliberately not "tar -xzf". That unpacks the VHD as an NTFS sparse file, and Hyper-V
-        # refuses a sparse virtual disk outright: "must be uncompressed and unencrypted and must
-        # not be sparse" (0xC03A001A). Clearing the flag afterwards is worse than no help at all,
-        # because fsutil allocates the full 30 GB to do it and leaves the drive full when it
-        # cannot finish. Unpacking to stdout and redirecting avoids the question: cmd creates an
-        # ordinary file and writes the stream through it.
-        & cmd.exe /c ('tar.exe -xOzf "{0}" > "{1}"' -f $archive, $vhd)
-        if ($LASTEXITCODE -ne 0) {
-            if (Test-Path -LiteralPath $vhd) { Remove-Item -LiteralPath $vhd -Force }
-            throw "tar could not unpack $name (exit $LASTEXITCODE)."
-        }
-        Assert-FixedVhd -Path $vhd
+        $info = Get-Qcow2Info -Path $archive
+        # The fixed VHD and the VHDX converted from it sit on the drive at the same time, so
+        # both are asked for, plus a GB so this is not the thing that fills the disk.
+        $needGb = [int][math]::Ceiling(2 * $info.VirtualSize / 1GB) + 1
+        Assert-FreeSpace -Path $cache -RequiredGb $needGb -For 'Converting the cloud image'
 
-        Write-Host '  compacting to a dynamic VHDX...'
+        Write-Host '  writing a fixed VHD...'
+        # New-VHD wants a sector multiple. A published image already is one, but rounding up
+        # costs nothing, and a disk slightly larger than the image is harmless: the guest's
+        # partition table decides what is used, and cloud-init grows the root partition on
+        # first boot to whatever the profile gave it anyway.
+        $sized = [long]([math]::Ceiling($info.VirtualSize / 512) * 512)
+        New-VHD -Path $vhd -SizeBytes $sized -Fixed | Out-Null
         try {
+            Expand-Qcow2 -Source $archive -Destination $vhd | Out-Null
+            Assert-FixedVhd -Path $vhd
+
+            Write-Host '  compacting to a dynamic VHDX...'
             ConvertTo-LabBootDisk -Source $vhd -Destination $prepared
         } finally {
             if (Test-Path -LiteralPath $vhd) { Remove-Item -LiteralPath $vhd -Force }

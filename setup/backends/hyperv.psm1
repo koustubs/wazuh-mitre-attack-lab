@@ -197,10 +197,13 @@ function New-LabVm {
         with the host.
 
         Generation is decided here rather than configured. The Windows endpoint needs Generation
-        2 for TPM and Secure Boot, which Windows 11 requires. The Ubuntu guests boot from a cloud
-        image published as an Azure VHD, for which no Generation 2 variant exists, so they are
-        Generation 1. That is not a limitation for a Linux guest: it costs a legacy BIOS boot and
-        nothing else this lab uses.
+        2 for TPM and Secure Boot, which Windows 11 requires. The Ubuntu guests are Generation 1.
+
+        The cloud image would boot either way: its GPT carries both a BIOS boot partition and a
+        106 MB EFI system partition. Generation 1 is chosen because a Generation 2 VM boots with
+        Secure Boot on and rejects Canonical's shim unless it is switched to the Microsoft UEFI
+        certificate authority template, which is one more thing to get right for a guest that
+        gains nothing from it. A legacy boot is the entire cost.
     #>
     param(
         [Parameter(Mandatory)][string]$Name,
@@ -308,11 +311,13 @@ function Resize-LabVmDisk {
 
 function ConvertTo-LabBootDisk {
     <#
-        Turns the unpacked cloud image into the disk format this backend boots, at a path of the
-        caller's choosing.
+        Turns the converted cloud image into the disk format this backend boots, at a path of
+        the caller's choosing.
 
-        The Azure variant ships as a fixed-size VHD, which is its full declared size on disk from
-        the first byte. Converting to a dynamic VHDX costs one pass and about 3 GB less cache.
+        Get-LabImage.ps1 writes a fixed VHD, because a fixed VHD is the one format where a guest
+        offset is a file offset and so can be written sparsely from the image's allocated
+        clusters. A fixed VHD is also its full declared size on disk, so it is not what the
+        guests should be copying. One pass makes it dynamic.
     #>
     param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Destination)
 

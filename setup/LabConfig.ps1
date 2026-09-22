@@ -225,10 +225,10 @@ function Get-LabPath {
         'Evidence' { Join-Path $root 'evidence' }
         'Findings' { Join-Path $root 'evidence\findings' }
         'Cache'    { Join-Path $root '.cache' }
-        # Not under the repository. Preparing the cloud image needs room for the unpacked
-        # 30 GB disk as well as the result, which is more than a clone should ever ask of the
-        # drive it happens to sit on. It belongs beside the VM disks, on the drive the profile
-        # was sized against and the one the preflight checks.
+        # Not under the repository. Preparing the cloud image needs room for the converted
+        # disk as well as the result, and the finished image is the thing every guest's disk
+        # is copied from. It belongs beside the VM disks, on the drive the profile was sized
+        # against and the one the preflight checks.
         'Images'   { Join-Path ((Get-LabConfig).storageRoot -replace '/', '\') 'images' }
         'Scorer'   { Join-Path $root 'scoring\scorer' }
         'Config'   { Join-Path $root 'lab.config.json' }

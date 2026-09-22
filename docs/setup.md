@@ -81,15 +81,20 @@ out of every VM already built against the old one.
 .\setup\Get-LabImage.ps1
 ```
 
-About 580 MB, from `cloud-images.ubuntu.com`. It fetches the published `SHA256SUMS`, checks the
+About 600 MB, from `cloud-images.ubuntu.com`. It fetches the published `SHA256SUMS`, checks the
 signature when `gpg` is on the machine, downloads beside the target rather than onto it, and
-deletes anything whose hash does not match instead of keeping it. Then it unpacks and converts
-to whatever the backend boots.
+deletes anything whose hash does not match instead of keeping it. Then it converts it to
+whatever the backend boots.
 
 This is a disk that has already been installed, so there is no Ubuntu ISO to source and no
-operating system installer to sit through. Preparing it wants about 36 GB free for a few
-minutes, because the Hyper-V image unpacks to a 30 GB disk before it is compacted. Everything
-lands under `storageRoot`, beside the VM disks, not inside the clone. Run it once.
+operating system installer to sit through. Preparing it wants about 8 GB free for a couple of
+minutes and takes a little over two on a desktop SSD. Everything lands under `storageRoot`,
+beside the VM disks, not inside the clone. Run it once.
+
+Both backends take the same generic cloud image. Hyper-V cannot read its QCOW2 container, so
+`setup\QcowImage.ps1` reads it and writes the contents into a VHD. Canonical's ready-made
+Azure VHD would have saved that work and cannot be used: it pins `datasource_list` to `Azure`,
+so it ignores the NoCloud seed this lab hands it and boots with no address and no key.
 
 ## 3. Build the seeds
 

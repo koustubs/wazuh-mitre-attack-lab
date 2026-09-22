@@ -79,7 +79,7 @@
     "ubuntu": {
       "release": "24.04",
       "baseUrl": "https://cloud-images.ubuntu.com/releases/noble/release/",
-      "hyperv": "ubuntu-24.04-server-cloudimg-amd64-azure.vhd.tar.gz",
+      "hyperv": "ubuntu-24.04-server-cloudimg-amd64.img",
       "virtualbox": "ubuntu-24.04-server-cloudimg-amd64.vmdk",
       "checksums": "SHA256SUMS"
     }
