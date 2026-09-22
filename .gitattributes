@@ -5,3 +5,6 @@
 *.ps1 text eol=crlf
 *.md text
 *.puml text eol=lf
+*.mmd text eol=lf
+*.svg text eol=lf
+*.html text eol=lf
