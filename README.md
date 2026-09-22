@@ -21,7 +21,7 @@ different project. The guests are Ubuntu and Windows.
 | --- | --- | --- |
 | Host RAM | 12-16 GB | 32+ GB |
 | Free disk | 60 GB | 180 GB |
-| CPU | 4 cores with SVM or VT-x and SLAT | same |
+| CPU | 4-8 cores with SVM or VT-x and SLAT | 8+ cores with SVM or VT-x and SLAT |
 | Host OS | Windows 10 21H2 or Windows 11 | same |
 | Hypervisor | Hyper-V, or VirtualBox 7.0 or later | same |
 | Guests | manager and Linux endpoint | plus the Windows endpoint |
