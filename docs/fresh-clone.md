@@ -1,10 +1,10 @@
 # Starting from a fresh clone
 
 A clone is the source, not the lab. Five things are deliberately not in it. Four of them the
-setup scripts rebuild; one you supply, and only on the full profile.
+setup scripts rebuild; the fifth has to be supplied, and only on the full profile.
 
-If you skip this and go straight to the build, the first failure is `New-LabSeeds.ps1`
-complaining it cannot find a public key, which is confusing rather than informative.
+Skipping this and going straight to the build fails at `New-LabSeeds.ps1`, which complains it
+cannot find a public key. That is confusing rather than informative.
 
 ## What a clone does not contain
 
@@ -22,8 +22,8 @@ complaining it cannot find a public key, which is confusing rather than informat
 - Windows 10 21H2 or Windows 11, and an elevated PowerShell session for the steps that create
   VMs.
 - A hypervisor: Hyper-V on Pro, Enterprise or Education, or VirtualBox 7.0 or later. Nothing
-  here installs one for you. `setup\Test-LabHost.ps1` reports which are usable on this machine
-  and prints the command for the one you pick.
+  here installs one. `setup\Test-LabHost.ps1` reports which are usable on this machine and
+  prints the command for each.
 - The Windows OpenSSH client, for `ssh`, `scp` and `ssh-keygen`. Windows 11 ships it.
 - 60 GB free for the lean profile, 180 GB for the full one, plus about 8 GB transiently while
   the Ubuntu image is converted. `Test-LabHost.ps1` checks this against the profile.
@@ -44,7 +44,7 @@ version, from an elevated PowerShell at the repository root:
 ```
 
 `New-LabSecrets.ps1` will not overwrite an existing set without `-Force`, because replacing the
-keypair locks you out of any VM already built against the old one.
+keypair locks out any VM already built against the old one.
 
 For the offline rule suite, from a shell that can reach the internet:
 
@@ -75,9 +75,9 @@ than it was fitted on.
 ## Then
 
 [Build the lab](setup.md) from step 5. Once it is up, `Lab.cmd` at the root of the repository
-opens the dashboard, which is where you start and stop it from day to day.
+opens the dashboard, which is where it is started and stopped day to day.
 
-## If you are rebuilding on the same machine
+## Rebuilding on the same machine
 
 The lab occupies a fixed address range, `172.29.70.0/24`, and `New-Lab.ps1` refuses to run if
 a conflicting NAT already exists. Remove the old lab first:
@@ -86,4 +86,4 @@ a conflicting NAT already exists. Remove the old lab first:
 .\setup\Remove-Lab.ps1
 ```
 
-That leaves the virtual disks in place. `-DeleteDisks` removes those too, once you are sure.
+That leaves the virtual disks in place. `-DeleteDisks` removes those too.

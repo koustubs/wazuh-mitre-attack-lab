@@ -117,7 +117,7 @@ configure themselves on first boot from the cloud-init seed `setup/New-LabSeeds.
 Windows endpoint is the one guest that still runs an installer, driven unattended by
 `setup/New-WindowsSeed.ps1`.
 
-That replaced an Ubuntu server ISO you had to source yourself and an `autoinstall` directive
+That replaced an Ubuntu server ISO that had to be sourced by hand and an `autoinstall` directive
 typed at the GRUB prompt through a framebuffer driver, which was about fifteen minutes of
 installer per guest and the single most fragile step in the build.
 

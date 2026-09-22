@@ -1,8 +1,8 @@
 # Threat detection with Wazuh and MITRE ATT&CK
 
-A small detection lab you can build on one Windows machine. It stands up a Wazuh 4.14.7 manager
+A small detection lab that runs on a single Windows machine. It stands up a Wazuh 4.14.7 manager
 and one or two endpoints as virtual machines, deploys six custom rules covering three attacker
-behaviours, and gives you a local dashboard that runs the attacks, watches the alerts arrive and
+behaviours, and includes a local dashboard that runs the attacks, watches the alerts arrive and
 scores them.
 
 Every detection is driven by a real action. The Linux brute force case stands up a throwaway
@@ -15,21 +15,24 @@ It runs on Hyper-V or VirtualBox, on a Windows host. The host has to be Windows:
 the ISO authoring and the provisioning are PowerShell, and rewriting them for another OS is a
 different project. The guests are Ubuntu and Windows.
 
-## What you need
+## Requirements
 
-| | Required | Recmmended |
+| | lean | full |
 | --- | --- | --- |
-| Host RAM | 12-16 GB | 32+ GB |
+| Host RAM | 8 GB | 16 GB |
 | Free disk | 60 GB | 180 GB |
-| CPU | 4-8 cores with SVM or VT-x and SLAT | 8+ cores with SVM or VT-x and SLAT |
+| CPU | 4 to 8 cores with SVM or VT-x and SLAT | 8 or more, same features |
 | Host OS | Windows 10 21H2 or Windows 11 | same |
 | Hypervisor | Hyper-V, or VirtualBox 7.0 or later | same |
 | Guests | manager and Linux endpoint | plus the Windows endpoint |
 | Detection cases | 3 of 6, Linux only | 6 of 6 |
-| Images you supply | none | a Windows 11 ISO |
+| Images to supply | none | a Windows 11 ISO |
+
+The RAM figures are floors rather than comfortable numbers. They were measured on a host
+running nothing but the lab, and a machine in everyday use wants headroom above them.
 
 Hyper-V needs Windows Pro, Enterprise or Education. VirtualBox runs on Home as well, and on a
-machine that already has it. Nothing here installs a hypervisor for you.
+machine that already has it. Nothing here installs a hypervisor.
 
 **The VirtualBox backend is written and has never built a lab.** Everything measured in this
 repository was measured on Hyper-V. Both backends are held to the same sixteen function contract
@@ -38,9 +41,9 @@ names and the same mandatory arguments, return the same fields, and `virtualbox.
 cleanly on a host with no VirtualBox installed. None of that exercises `VBoxManage`. Hyper-V is
 the tested path and VirtualBox is the one to expect to have to fix.
 
-`setup\Test-LabHost.ps1` answers all of this about your own machine before you build anything.
-It changes nothing, names the virtualization setting the way your CPU vendor names it, and
-prints the one command that fixes each failure.
+`setup\Test-LabHost.ps1` answers all of this about the host before anything is built. It
+changes nothing, reports the virtualization setting under the name the CPU uses, and prints the
+one command that fixes each failure.
 
 ## Getting it running
 
@@ -187,5 +190,5 @@ was built for. It is not shipped as a result.
 | [`docs/fresh-clone.md`](docs/fresh-clone.md) | What a clone does not contain, and how to rebuild it. |
 | [`SECURITY.md`](SECURITY.md) | What is deliberately not in here. |
 
-No credential, key or raw evidence has ever been committed. `.lab-secrets/` is generated on your
-machine by `New-LabSecrets.ps1` and is gitignored at any depth.
+No credential, key or raw evidence has ever been committed. `.lab-secrets/` is generated on the
+host by `New-LabSecrets.ps1` and is gitignored at any depth.

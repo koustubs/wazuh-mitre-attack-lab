@@ -367,7 +367,7 @@ wazuh-threat-detection/
 ## 8. Rebuilding from scratch
 
 1. `setup\Test-LabHost.ps1`. It changes nothing and names what is missing, including whether a
-   hypervisor is installed at all. Installing one is yours to do.
+   hypervisor is installed at all. Installing one is a manual step.
 2. `setup\New-LabSecrets.ps1`. A clone has no keys and every step below depends on them.
 3. `setup\Get-LabImage.ps1`. Fetches and verifies the Ubuntu cloud image, once.
 4. `setup\New-LabSeeds.ps1`, and `setup\New-WindowsSeed.ps1` on the full profile.
@@ -438,11 +438,11 @@ produced a three page PDF of both.
 
 **Still open:**
 
-- Windows still needs an ISO you supply. Ubuntu does not: `Get-LabImage.ps1` fetches the cloud
+- Windows still needs a supplied ISO. Ubuntu does not: `Get-LabImage.ps1` fetches the cloud
   image and checks it against the published SHA256, and cloud-init configures the guest on first
   boot, so there is nothing to type at a console. The agent key transfer is no longer manual
   either; `Install-LabAgents.ps1` reads each key off the manager and enrols the endpoint with it.
-  What is left by design is the hypervisor, which you install yourself.
+  What is left by design is the hypervisor, which is installed by hand.
 - **The exporter.** `run-campaign.sh` records what it launched and when; nothing yet joins
   those runs to the alerts they caused in the indexer. Until it exists, a campaign produces
   labels without features and the lab's own rules stay untested in sequence. Alert retention

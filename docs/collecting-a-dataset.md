@@ -107,7 +107,7 @@ The overnight risks are not the ones people expect. Check them in this order:
 1. **Host sleep and hibernate.** A desktop quietly sleeping at 2am is far more likely than a
    power cut. Confirm with `powercfg /q SCHEME_CURRENT SUB_SLEEP`; both should read Never.
 2. **Windows Update restarting the host.** Updates do not restart during active hours. Read
-   yours from `HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings`, then pick a window that sits
+   the configured hours from `HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings`, then pick a window that sits
    entirely inside them.
 3. **A pending reboot.** Reboot before starting rather than during.
 

@@ -11,7 +11,7 @@ Raw evidence is excluded for the same reason. Live runs record account names, so
 and scheduled task contents, so only two sanitised summaries are committed:
 `evidence/README.md` and `evidence/validation-status.md`.
 
-If you clone this, you start with no credentials. That is intended. See
+A clone starts with no credentials. That is intended. See
 [docs/fresh-clone.md](docs/fresh-clone.md).
 
 ## What the lab deliberately does
@@ -27,7 +27,7 @@ This is a detection lab, so some of it looks like the thing it detects. Worth be
   against a disposable account.
 
 None of these are useful as attack tools and none of them touch anything outside the VM they run
-on. They are here because a detection you have never seen fire is not a detection.
+on. They are here because a detection that has never been seen to fire is not a detection.
 
 ## Network exposure
 
@@ -59,9 +59,9 @@ Run through this list. Some of it cannot be checked mechanically.
       scanned automatically and needs a human to open it.
 - [ ] Confirm the addresses in this repository are still the RFC 1918 lab range `172.29.70.0/24`
       and that no real network has been substituted.
-- [ ] Rotate `.lab-secrets/` if the keypair has ever been copied to a machine you do not control.
+- [ ] Rotate `.lab-secrets/` if the keypair has ever been copied to an uncontrolled machine.
 
 ## Reporting something
 
-This is a personal lab project rather than deployed software. If you find a problem in it, open
-an issue.
+This is a personal lab project rather than deployed software. Problems with it can be reported
+by opening an issue.

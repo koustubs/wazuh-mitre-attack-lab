@@ -1,7 +1,7 @@
 # Building the lab
 
 Eight steps, each one script that does one job and says what it did. Nothing here installs a
-hypervisor, and nothing runs until you run it.
+hypervisor, and nothing runs on its own.
 
 Everything reads `lab.config.json` at the root of the repository. Addresses, VM names, memory
 and disk sizes, the Ubuntu image and the Wazuh version are all in that one file; change the
@@ -16,10 +16,13 @@ move the lab onto a different network.
 | Free disk | 60 GB | 180 GB |
 | Guests | manager, Linux endpoint | plus the Windows endpoint |
 | Detection cases | 3 of 6, Linux only | 6 of 6 |
-| Images you supply | none | a Windows 11 ISO |
+| Images to supply | none | a Windows 11 ISO |
 | Manager | 4 GB, 2 vCPU, 32 GB disk | 6 GB, 4 vCPU, 60 GB disk |
 | Linux endpoint | 1 GB, 1 vCPU, 16 GB disk | 1.5 GB, 2 vCPU, 20 GB disk |
 | Windows endpoint | absent | 4 GB, 2 vCPU, 64 GB disk |
+
+The host RAM figures are floors, measured on a host running nothing but the lab. A machine in
+everyday use wants headroom above them.
 
 Memory is dynamic on Hyper-V, with the minimum and maximum above in `lab.config.json`, so an
 idle guest gives its unused pages back. VirtualBox has no equivalent and takes what it is
@@ -50,17 +53,17 @@ than suggestions. They come from `lab.config.json`, which is also where to chang
 .\setup\Test-LabHost.ps1
 ```
 
-Changes nothing. It reports virtualization in firmware, naming the setting as your CPU vendor
-names it, which hypervisors are usable here, whether Hyper-V and VirtualBox are in conflict,
+Changes nothing. It reports virtualization in firmware, under the name the CPU uses, which
+hypervisors are usable here, whether Hyper-V and VirtualBox are in conflict,
 RAM and disk against the profile, and whether the host can reach the internet. Each failure
 prints the one command that fixes it. `-Profile lean` asks whether the smaller profile would
 fit instead; `-Json` gives the same answers to a script.
 
 Exit code 0 means nothing failed. Warnings do not fail it.
 
-If it reports a missing hypervisor, that is yours to install. It prints the
+A missing hypervisor has to be installed first, and this does not do it. It prints the
 `Enable-WindowsOptionalFeature` line for Hyper-V, or where to get VirtualBox. Enabling Hyper-V
-is a reboot and a decision about your own machine.
+costs a reboot and changes how the host runs, which is not a script's decision to make.
 
 ## 1. Create the lab credentials
 
@@ -72,8 +75,8 @@ Writes an SSH keypair, a 20 character console password and its SHA-512 crypt has
 `.lab-secrets\`, which is gitignored and has never been committed. Everything downstream reads
 those and fails immediately if they are missing.
 
-It will not overwrite an existing set without `-Force`, because replacing the keypair locks you
-out of every VM already built against the old one.
+It will not overwrite an existing set without `-Force`, because replacing the keypair locks out
+every VM already built against the old one.
 
 ## 2. Fetch the Ubuntu image
 
@@ -118,7 +121,7 @@ easy option; it is a single-edition ISO, so leave `-ImageName` and `-ProductKey`
 multi-edition retail or VL ISO, pass `-ImageName` with the edition as the image list names it,
 or Setup stops on the edition picker and waits for a human. Microsoft's generic Volume License
 Setup Key for Windows 11 Pro selects the edition and activates nothing; pass it as
-`-ProductKey` if your ISO needs one. An unactivated guest is fine for a lab that gets deleted.
+`-ProductKey` if the ISO needs one. An unactivated guest is fine for a lab that gets deleted.
 
 ## 4. Create the VMs
 
@@ -203,8 +206,8 @@ does. The second adds an agent identity for each new endpoint and leaves existin
 Both are idempotent. The guest reads the profile from `/etc/wazuh-lab/lab.env`, which is written
 from `lab.config.json` into the seed, so a guest built under the old profile still holds the old
 one: regenerate it with `setup\Write-GuestConfig.ps1` and copy it to
-`/etc/wazuh-lab/lab.env` first, or both scripts will faithfully re-apply the profile you are
-leaving.
+`/etc/wazuh-lab/lab.env` first, or both scripts will faithfully re-apply the profile being
+left behind.
 
 The second deploys `lab_rules.xml`, validates it, disables `authd`, and writes one agent
 identity per endpoint into `/root/wazuh-lab-keys/`.
@@ -300,7 +303,7 @@ evidence of detection on its own.
 
 ## Running the lab day to day
 
-`Lab.cmd`, at the root of the repository, is the front door. It opens the dashboard in your
+`Lab.cmd`, at the root of the repository, is the front door. It opens the dashboard in the default
 browser, and that is where the lab is started, watched and stopped from. It asks for elevation
 once at launch, because the hypervisor will not report VM state otherwise.
 

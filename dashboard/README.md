@@ -16,7 +16,7 @@ nothing is blocking. Ten reads, none of which change anything. They are the same
 | Check | Why it is here |
 | --- | --- |
 | Administrator rights | A hypervisor does not answer an ordinary session, so nothing below can be read. |
-| Hardware virtualization | Named as your CPU vendor names it: SVM on AMD, VT-x on Intel. Off in firmware, and no VM starts at all. |
+| Hardware virtualization | Named as the CPU names it: SVM on AMD, VT-x on Intel. Off in firmware, and no VM starts at all. |
 | Hypervisor | The backend `lab.config.json` selects. If it is missing and the other one is installed, it says so and names the one-word change. |
 | Lab network | The switch and the NAT, or on VirtualBox the host-only adapter, covering the configured subnet. |
 | Lab virtual machines | The VMs the active profile calls for, under the names this tool expects. A missing Windows endpoint on the lean profile is not a failure. |
@@ -36,8 +36,8 @@ the subnet changes what they ask for without anything here being edited.
 Everything passing opens the dashboard on its own, in about a second. Anything failing leaves the
 box where it is and names the cause and the command that fixes it, with "Check again" beside it.
 
-There is always an "Open anyway". A check that is wrong should not lock you out of your own tool,
-and every panel below already says what it cannot read.
+There is always an "Open anyway". A check that is wrong should not make the tool unusable, and
+every panel below already says what it cannot read.
 
 Virtualization is worth one note, because the obvious way to test it is wrong. Once Hyper-V is
 running it owns the virtualization extensions, and `Win32_Processor` then reports
@@ -56,8 +56,8 @@ The logins, in a panel under the host strip:
 | Linux endpoint | `labadmin@172.29.70.30`, key or console password |
 | Windows endpoint | `labadmin@172.29.70.20`, key over SSH, or the console password at the VM |
 
-Addresses and usernames are always shown. Passwords arrive masked and stay masked until you press
-"Show passwords", and every value has a Copy button.
+Addresses and usernames are always shown. Passwords arrive masked and stay masked until
+"Show passwords" is pressed, and every value has a Copy button.
 
 The console password is read from `.lab-secrets` at the moment of the request. The Wazuh password
 is different: the installer generates it and writes it into a root-owned log, so that one needs
@@ -220,12 +220,12 @@ It asks for the lab account's sudo password, uses it for that run, and stores no
   access panel. This is the one thing here that hands over a password. It is read from the
   installer's own log and printed on stdout rather than passed as an argument, so it never
   appears in a process list, and it comes back over the SSH connection already open. Leave this
-  file off the manager if you would rather the dashboard never saw it: the panel then says it
+  file off the manager to keep the dashboard from ever seeing it: the panel then says it
   could not read it, and nothing else changes.
 - On the Linux endpoint, the scenario driver at a stable path plus the six exact sudoers entries.
 
 Every sudoers file is checked with `visudo` before installation, and nothing is written if that
-fails, because a broken sudoers file locks you out of sudo entirely.
+fails, because a broken sudoers file locks the account out of sudo entirely.
 
 Group membership only applies to new logins. If the alert panel still says it cannot read, restart
 the manager.
@@ -233,12 +233,12 @@ the manager.
 ## Why it asks for administrator
 
 Neither hypervisor reports VM state to an ordinary session. Rather than failing halfway, the
-script relaunches itself elevated, so you get one UAC prompt at launch.
+script relaunches itself elevated, so there is one UAC prompt at launch.
 
 `-NoElevate` serves the page without it. The layout is all there but every VM reports "Needs
 administrator", because the backend is refusing to answer.
 
-## It will not start your VMs by itself
+## It does not start the VMs by itself
 
 Worth being precise, because it was a design requirement.
 
@@ -304,7 +304,7 @@ moves while the page is asking; going quiet part way through a bring-up would le
 boot. Polling therefore continues while a sequence runs, and an unwatched gap is added back to the
 phase deadline so that nobody looking is never reported as a timeout.
 
-Four things were measured and fixed to get here, all worth knowing if you edit this:
+Four things were measured and fixed to get here, all worth knowing before editing this:
 
 **Host CPU comes from a performance counter, not `Win32_Processor`.** That WMI class takes about a
 second to answer, which was most of the cost of every poll. The counter answers in about a
@@ -362,7 +362,7 @@ exposed, but nothing is improved either.
 
 The Lab access panel shows real passwords on request, on that same loopback-only, token-gated
 page. They arrive masked. Worth being plain about what changed: before this, no Wazuh password
-was read off the manager at all. Now one is, when you ask for it. The property kept is that it is
+was read off the manager at all. Now one is, on request. The property kept is that it is
 never an argument to anything and so never reaches a process list.
 
 ## If something goes wrong
@@ -390,6 +390,6 @@ exactly which capability is missing.
 **A scenario reports that it returned nothing.** It did not run. The most likely cause on Linux is
 that the one-time setup has not been run on that endpoint; check with `sudo -l` as `labadmin`.
 
-**The opening box says virtualization is off, but your VMs run.** Read the note under "Before it
+**The opening box says virtualization is off, but the VMs run.** Read the note under "Before it
 opens". If `HypervisorPresent` is false on a host with running VMs, something is wrong with WMI
 rather than with the firmware; Task Manager, Performance, CPU settles it in one look.
