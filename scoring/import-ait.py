@@ -155,14 +155,17 @@ def windows(times, rules, phases, scenario, width, max_alerts, levels):
     """
     if len(times) == 0:
         return []
-    # Anchored on the first alert rather than the epoch, so a boundary means something
-    # relative to the capture rather than to 1970.
-    origin = float(times[0])
+    # Anchored on the epoch, because that is where the live scorer puts its boundaries:
+    # Start-LabDashboard.ps1 buckets an alert into `at - (at % width)` and has no capture to
+    # anchor on. Anchoring here on the first alert instead, which is what this did first,
+    # offset every training window by that capture's own arbitrary start, so a burst that the
+    # live panel would split across two windows could arrive in training as one, and the
+    # features a model was fitted on were not the features it would be shown.
     out = []
     n = len(times)
     i = idx = 0
     while i < n:
-        lo = origin + width * ((float(times[i]) - origin) // width)
+        lo = width * (float(times[i]) // width)
         hi = lo + width
         j = bisect.bisect_left(times, hi, i)
         chunk_t, chunk_r = times[i:j], rules[i:j]
@@ -171,6 +174,22 @@ def windows(times, rules, phases, scenario, width, max_alerts, levels):
 
         # The tail is kept rather than the head, because persistence lands at the end of a
         # window and sequences() truncates the same way.
+        #
+        # The cap was 256, which bound 8.8% of all windows and 20.7% of the attack ones, so the
+        # count feature saturated on exactly the windows whose size was the signal and a
+        # training row said 256 where the live panel would have said four hundred.
+        #
+        # 4096 is chosen against the live ceiling rather than against this data. One indexer
+        # search returns at most 5000 documents, across every endpoint and all eighteen windows
+        # in its ninety minute span, so no window the panel ever scores can hold more than that
+        # and a training window must not claim a count the panel could never produce.
+        #
+        # It still binds 26 windows of 8932, and every one of them is attack-labelled: the AIT
+        # scenarios include flood phases running above a hundred thousand alerts in five
+        # minutes, and those 26 windows hold 1.70M of the 2.60M alerts in the dataset. So this
+        # is not a neutral truncation. It flattens the largest positive-class windows, which
+        # costs real signal, and it is the right trade anyway, because that signal does not
+        # exist on the receiving end.
         if len(chunk_t) > max_alerts:
             chunk_t, chunk_r = chunk_t[-max_alerts:], chunk_r[-max_alerts:]
 
@@ -198,7 +217,7 @@ def main():
     p.add_argument("--cache", default="data/ait/cache")
     p.add_argument("--window", type=float, default=300.0,
                    help="episode width in seconds (default 300, the lab episode scale)")
-    p.add_argument("--max-alerts", type=int, default=256,
+    p.add_argument("--max-alerts", type=int, default=4096,
                    help="cap per episode; the busiest scenarios run thousands a minute")
     p.add_argument("--scenarios", nargs="*", default=list(SCENARIOS))
     a = p.parse_args()

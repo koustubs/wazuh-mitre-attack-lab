@@ -78,18 +78,28 @@ def operating_points(folds):
     whether this is deployable.
     """
     from baseline import fit_logistic, score_logistic
-    from features import build_vocab, standardise, tabular
+    from features import build_vocab, sources_of, standardise, tabular
 
     best = max(folds, key=lambda f: f["log_ap"])
     eps = read_episodes(STEP / "data/ait/episodes.jsonl")
     train = sorted((e for e in eps if e["source"] != best["held"]),
                    key=lambda e: (e["source"], e["startedAt"]))
     test = sorted((e for e in eps if e["source"] == best["held"]), key=lambda e: e["startedAt"])
-    vocab = build_vocab(train, STEP / "data/ait/episodes.jsonl")
-    Xtr, ytr = tabular(train, vocab)
+
+    # Fitted the way evaluate.py fits that fold, or the curve below belongs to a different
+    # model than the average precision quoted beside it. That means the same rotated
+    # whole-network validation holdout, excluded from fitting. This used to take the first 85%
+    # of the training rows instead, which, because they are sorted by source, silently dropped
+    # the back end of whichever network sorted last.
+    names = sources_of(eps)
+    val_name = best.get("validatedOn") or names[(names.index(best["held"]) + 1) % len(names)]
+    inner = [e for e in train if e["source"] != val_name]
+
+    vocab = build_vocab(inner, STEP / "data/ait/episodes.jsonl")
+    Xin, yin = tabular(inner, vocab)
     Xte, yte = tabular(test, vocab)
-    Xtr_s, Xte_s = standardise(Xtr, Xte)
-    w, b = fit_logistic(Xtr_s[:int(len(train) * 0.85)], ytr[:int(len(train) * 0.85)])
+    Xin_s, Xte_s = standardise(Xin, Xte)
+    w, b = fit_logistic(Xin_s, yin)
     s = score_logistic(Xte_s, w, b)
 
     order = np.argsort(-s, kind="stable")
@@ -105,7 +115,8 @@ def operating_points(folds):
     j = int(half[0]) if len(half) else len(hit) - 1
 
     return {
-        "held": best["held"], "n": len(test), "attack": int(yte.sum()), "ap": best["log_ap"],
+        "held": best["held"], "validatedOn": val_name, "n": len(test),
+        "attack": int(yte.sum()), "ap": best["log_ap"],
         "perfect": {"recall": float(rec[k]), "tp": int(tp[k]), "fp": int(fp[k])},
         "half": {"recall": float(rec[j]), "precision": float(prec[j]),
                  "tp": int(tp[j]), "fp": int(fp[j])},
@@ -141,9 +152,15 @@ def collect():
         "rule": int(((rap > lap) & (rap > gap) & (rap > sap)).sum()),
         "portable": int(((sap > lap) & (sap > gap) & (sap > rap)).sum()),
         "gru_over_log": int((gap > lap).sum()),
+        "log_over_gru": int((lap > gap).sum()),
         "gru_margin": float((gap - lap).mean()),
+        "gru_margin_sd": float((lap - gap).std()),
         "portable_over_rule": int((sap > rap).sum()),
         "portable_over_base": int((sap > base).sum()),
+        "portable_over_full": int((sap > lap).sum()),
+        # The spread on the paired difference, not on either column. It is the number that
+        # says whether the gap between the two feature sets is a result or a coin flip.
+        "portable_gap_sd": float((lap - sap).std()),
         "portable_retained": float(sap.mean() / lap.mean()),
         "n": len(folds),
     }
@@ -177,6 +194,18 @@ def collect():
         total += n
     data["alerts"] = {"total": total, "bySource": per}
 
+    # What moving the cutoff does to f1 on identical predictions, which is the argument for
+    # quoting average precision at all. Re-run on the real data rather than typed into the
+    # template, because it was typed in once and was 0.049 and 0.367 for a year after the
+    # import that produced it had changed. Under a minute.
+    ait_b = run("baseline.py", "--data", "data/ait/episodes.jsonl")
+    f1_half, = grab(r"logistic @0\.5\s+acc [\d.]+\s+precision [\d.]+\s+recall [\d.]+\s+f1 ([\d.]+)",
+                    ait_b, "the AIT logistic f1 at 0.5")
+    f1_tuned, = grab(
+        r"logistic @(?!0\.5\s)[\d.]+\s+acc [\d.]+\s+precision [\d.]+\s+recall [\d.]+\s+f1 ([\d.]+)",
+        ait_b, "the AIT logistic f1 at a chosen threshold")
+    data["cutoff"] = {"atHalf": float(f1_half), "atChosen": float(f1_tuned)}
+
     # The synthetic comparison, re-run rather than remembered. It is eight seconds.
     syn_b = run("baseline.py", "--data", "data/synthetic/episodes.jsonl")
     syn_t = run("train.py", "--data", "data/synthetic/episodes.jsonl")
@@ -197,6 +226,19 @@ def collect():
         "log_ap": float(log_ap), "gru_f1": float(gru_f1), "gru_sd": float(gru_sd),
         "gru_ap": float(gru_ap),
     }
+
+    # Window width and split sensitivity, read rather than re-run: window-sensitivity.py
+    # re-imports the archive at each width and that is ten minutes, which does not belong in a
+    # document build. It is a required artefact for the same reason folds.jsonl is, so the
+    # report cannot quote a width figure that nothing produced.
+    data["sensitivity"] = json.loads(
+        io.open(need(STEP / "data/ait/sensitivity.json"), encoding="utf-8-sig").read())
+
+    # What the four severity columns are worth inside the deployed set. Required for the same
+    # reason: the document claims severity transfers where a rule id does not, and that claim
+    # used to be an argument with a figure attached to it that no run had produced.
+    data["ablation"] = json.loads(
+        io.open(need(STEP / "data/ait/severity.json"), encoding="utf-8-sig").read())
 
     # The operating points that say why none of this is an alerting rule.
     #
@@ -288,13 +330,30 @@ def page(d):
         "shape_ap": "%.3f" % s["shape_ap"]["mean"],
         "shape_sd": "%.3f" % s["shape_ap"]["sd"],
         "wins_log": w["logistic"], "wins_gru": w["gru"],
+        "cut_half": "%.3f" % d["cutoff"]["atHalf"],
+        "cut_chosen": "%.3f" % d["cutoff"]["atChosen"],
+        # The two folds that would each have produced a different headline on their own.
+        "swing_gru": "%.3f" % max(f["log_ap"] - f["gru_ap"] for f in d["folds"]),
+        "swing_gru_lo": "%.3f" % abs(min(f["log_ap"] - f["gru_ap"] for f in d["folds"])),
+        "swing_shape": "%.3f" % max(f["log_ap"] - f["shape_ap"] for f in d["folds"]),
         "gru_margin": "%+.3f" % w["gru_margin"],
         "portable_gap_gru": "%.3f" % abs(w["gru_margin"]),
+        "portable_gap_gru_sd": "%.3f" % w["gru_margin_sd"],
+        "log_over_gru": w["log_over_gru"],
         "portable_pct": "%.0f" % (100.0 * w["portable_retained"]),
         "portable_gap": "%.3f" % (s["log_ap"]["mean"] - s["shape_ap"]["mean"]),
+        "portable_gap_sd": "%.3f" % w["portable_gap_sd"],
         "portable_over_rule": w["portable_over_rule"],
         "portable_over_base": w["portable_over_base"],
+        "portable_over_full": w["portable_over_full"],
         "portable_times": "%.0f" % (s["shape_ap"]["mean"] / s["base"]["mean"]),
+        "sev_full": "%.3f" % d["ablation"]["full"]["mean"],
+        "sev_without": "%.3f" % d["ablation"]["withoutSeverity"]["mean"],
+        "sev_alone": "%.3f" % d["ablation"]["severityOnly"]["mean"],
+        "sev_cost": "%.3f" % abs(d["ablation"]["delta"]),
+        "sev_hurt": d["ablation"]["foldsHurt"],
+        "sev_pct": "%.0f" % (100.0 * d["ablation"]["severityOnly"]["mean"]
+                             / d["ablation"]["full"]["mean"]),
         "syn_episodes": syn["episodes"], "syn_attack": syn["attack"],
         "syn_base": "%.3f" % syn["base"],
         "syn_rule_f1": "%.3f" % syn["rule_f1"], "syn_log_f1": "%.3f" % syn["log_f1"],
@@ -326,6 +385,13 @@ def page(d):
         "sev_quiet": "%.0f" % d["severity"]["quiet"],
         "sev_brute": "%.0f" % d["severity"]["brute"],
         "sev_chain": "%.0f" % d["severity"]["chained"],
+        "sens_rows": "".join(
+            "<tr><td class=n>%s</td><td class=n>%.3f</td><td class=n>%.3f</td></tr>"
+            % (e(w), v["mean"], v["sd"])
+            for w, v in sorted(d["sensitivity"]["widths"].items(), key=lambda kv: int(kv[0]))),
+        "sens_low": "%.3f" % min(v["mean"] for v in d["sensitivity"]["widths"].values()),
+        "sens_high": "%.3f" % max(v["mean"] for v in d["sensitivity"]["widths"].values()),
+        "sens_time": "%.3f" % d["sensitivity"]["timeSplit"],
     }
 
 

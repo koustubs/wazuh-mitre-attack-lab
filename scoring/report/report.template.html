@@ -82,9 +82,10 @@ add the thing they cannot do, which is to read a run of alerts and judge it.</p>
 <div class="finding">
 <p><strong>The result is that a sequence model does not earn its place here.</strong> Measured on
 %(alerts_total)s real alerts from eight independent networks, plain logistic regression on rule
-counts and timing beats a GRU over the alert sequence on %(wins_log)s held out networks out of
-%(n_folds)s. The GRU wins none of them, trailing by a mean of %(portable_gap_gru)s average
-precision. On this evidence PyTorch is not justified for this problem.</p>
+counts and timing beats a GRU over the alert sequence on %(log_over_gru)s held out networks out
+of %(n_folds)s, by a mean of %(portable_gap_gru)s average precision with a spread of
+%(portable_gap_gru_sd)s on that margin. It is the only comparison in this document consistent
+enough to carry a verdict. On this evidence PyTorch is not justified for this problem.</p>
 <p>The model that is deployed on the lab dashboard is therefore a logistic regression over eleven
 features, and it is deployed with its measurement attached rather than as a detection.</p>
 </div>
@@ -139,11 +140,32 @@ lab measures the lab, and that is section 9.</p>
 <h3>How an episode is built</h3>
 <p>An episode is a fixed %(window)s second window of alerts, labelled attack if it overlaps a
 ground truth attack phase from the dataset's own <code>labels.csv</code>. Tumbling rather than
-sliding, so no alert is counted twice and no two episodes share evidence. The tail of an
-over-long window is kept rather than the head, because persistence lands at the end of a window.
-The choice of width was checked rather than assumed: logistic average precision is 0.296, 0.303
-and 0.289 at 120, 300 and 600 second windows, so the conclusions here are not an artefact of
-where the boundaries fall.</p>
+sliding, so no alert is counted twice and no two episodes share evidence. Boundaries fall on the
+epoch rather than on the first alert of the capture, because that is where the live scorer puts
+them and a training window has to be the window the model will be shown. The tail of an over-long
+window is kept rather than the head, because persistence lands at the end of a window, and the
+cap is set to the live ceiling rather than to a round number.</p>
+
+<h3>How much of this is the window, and how much is the split</h3>
+<p>Both are choices, so both were measured. The full logistic, same folds, at three widths:</p>
+
+<table>
+<tr><th>window, seconds</th><th>average precision</th><th>sd</th></tr>
+%(sens_rows)s
+</table>
+
+<p>Width matters, and more than an earlier version of this document said. Average precision runs
+from %(sens_low)s to %(sens_high)s across that range, rising with the window: a wider window
+holds more of an attack phase and ranks it better. The earlier flat reading was an artefact of a
+per-window alert cap of 256, which discarded the extra alerts a wider window collected before the
+features ever saw them. Any figure here should be read with its width attached. %(window)s
+seconds is deployed because it is what the panel buckets at, not because it scores best.</p>
+
+<p>The split matters less, and in the safe direction. Held out by time rather than by network,
+the same model scores %(sens_time)s against %(log_ap)s on the network split. A time split shares
+networks between fitting and test, so it should be the easier of the two, and it is. Had it come
+back much lower, the network folds would have been measuring something other than
+generalisation.</p>
 
 <h2 class="newpage">3. The training process</h2>
 
@@ -159,24 +181,29 @@ has never seen has generalised. A model that scores well on the last hour of a n
 on may only have learned that network's noise floor.</p>
 
 <h3>Eight folds, not one split</h3>
-<p>On a single split the logistic model and the GRU finished 0.046 apart with forty attack
-episodes between them, which is well inside what a different pair of held out networks would move.
-Every result below is leave one network out across all %(n_folds)s networks: train on seven, test
-on the eighth, repeat. Counting how many folds each model wins is the claim that survives.</p>
+<p>Any single network here would have supported a different conclusion. The logistic model beats
+the GRU by %(swing_gru)s average precision on one of them and loses to it by %(swing_gru_lo)s on
+another; it beats the deployed portable feature set by %(swing_shape)s on one and loses to it on
+%(portable_over_full)s of the %(n_folds)s. Which network is held out moves the answer further
+than which model is fitted, so a result taken from one split is a result about that split. Every
+result below is leave one network out across all %(n_folds)s networks: train on seven, test on
+the eighth, repeat. Counting how many folds each model wins is the claim that survives.</p>
 
 <h3>Average precision, not f1 at a fixed cutoff</h3>
 <p>At a %(base_pct)s&thinsp;%% base rate, f1 at 0.5 says more about where a model happens to put
 its threshold than about whether it ranks attacks above background. The same logistic predictions
-score f1 0.049 at 0.5 and 0.367 at a threshold chosen on validation. Average precision is the area
-under the precision-recall curve and cannot be flattered that way. Its floor is the base rate: a
-model ranking at random scores %(base_ap)s here.</p>
+score f1 %(cut_half)s at 0.5 and %(cut_chosen)s at a threshold chosen on validation. Average
+precision is the area under the precision-recall curve and cannot be flattered that way. Its
+floor is the base rate: a model ranking at random scores %(base_ap)s here.</p>
 
 <h3>Nothing is chosen on the test set</h3>
-<p>The vocabulary of known signatures is built from training sources only, so a signature that
+<p>The vocabulary of known signatures is built from the fitting sources only, so a signature that
 appears solely in the held out network falls through to an unknown index, which is the correct
-thing for it to do. Thresholds and early stopping are chosen on a validation slice held back from
-training. The GRU is run with three seeds per fold and the mean reported, because a single seed on
-%(attack)s positives is noise.</p>
+thing for it to do. Thresholds and early stopping are chosen on a second whole network, held back
+from fitting inside the seven and rotated so that each one validates exactly once. Standardisation
+and the vocabulary are fitted on the remaining six alone, not on the seven, so nothing the
+operating point was chosen against contributed to the weights either. The GRU is run with three
+seeds per fold and the mean reported, because a single seed on %(attack)s positives is noise.</p>
 
 <h2>4. Every model tried, and what it scored</h2>
 
@@ -209,13 +236,17 @@ useless.</p>
 
 <h2>5. Which model won, and what that means</h2>
 
-<p><strong>Logistic regression on rule counts and timing wins all %(wins_log)s folds.</strong> The
-GRU beats it on none of them. That is the finding, and three things follow from it that are not
-all negative.</p>
+<p><strong>Logistic regression on rule counts and timing beats the GRU on %(log_over_gru)s of the
+%(n_folds)s folds, by %(portable_gap_gru)s average precision with a %(portable_gap_gru_sd)s
+spread on that margin.</strong> It also has the best mean of the four, though that part is
+narrower: the deployed portable feature set is ahead of it on %(portable_over_full)s folds. The
+model-against-model claim that survives the fold spread is the one about the GRU, and three
+things follow from it that are not all negative.</p>
 
 <p><strong>All of them find real signal.</strong> %(log_ap)s against a %(base_ap)s base rate is
-roughly twelve times better than chance, and the single best rule at %(rule_ap)s is not far
-behind. The signal is there. The argument is only about what is needed to extract it.</p>
+roughly twelve times better than chance, the deployed feature set at %(shape_ap)s is ten times,
+and the single best rule at %(rule_ap)s is not far behind either. The signal is there. The
+argument is only about what is needed to extract it.</p>
 
 <p><strong>The sequence model is not obviously wrong, it is just not worth it.</strong> The GRU
 reaches %(gru_ap)s, above the best single rule, so ordering by sequence does carry information. It
@@ -225,7 +256,7 @@ does not beat counting on this data, not that no sequence model ever could: this
 class-balanced sampling, no per-fold threshold tuning during training and no attention over the
 window.</p>
 
-<p><strong>None of them is deployable as an alerting rule.</strong> Take the winning model on its
+<p><strong>None of them is deployable as an alerting rule.</strong> Take the full logistic on its
 best fold, %(op_held)s, which is %(op_n)s windows containing %(op_attack)s attack windows. Ranked
 by score, it holds perfect precision down to recall %(op_perfect_rec)s: %(op_perfect_tp)s attacks
 caught and nothing false. Push it to catch half of them, recall %(op_half_rec)s, and precision is
@@ -235,7 +266,7 @@ honest correction to section 7.</p>
 
 <h2 class="newpage">6. What was deployed, and why it is not the winner</h2>
 
-<p>The model that won every fold cannot be run on this lab, and that is worth being precise
+<p>The model with the best mean cannot be run on this lab, and that is worth being precise
 about. Its feature vector is one column per AIT rule id. This lab and AIT share two signatures out
 of %(signatures)s. Pointed at live lab alerts, every one of them would land in the unknown column
 and the model would return a confident number about nothing.</p>
@@ -244,7 +275,11 @@ and the model would return a confident number about nothing.</p>
 single signature. How many alerts arrived, over how long, how close together, how tightly the
 busiest minute was packed, how many distinct signatures were involved, and how severe they were.
 Severity earns its place by being a property of the Wazuh ruleset rather than of one capture,
-which is why it transfers where a rule id does not; it is worth roughly double on its own.</p>
+which is why it transfers where a rule id does not, and <code>severity-ablation.py</code> says
+what that is worth rather than leaving it as an argument. Dropping the four level columns takes
+the set from %(sev_full)s to %(sev_without)s average precision, a cost of %(sev_cost)s that
+shows on %(sev_hurt)s of the %(n_folds)s folds, and the four on their own reach %(sev_alone)s,
+which is %(sev_pct)s&thinsp;%% of what all eleven reach.</p>
 
 <table>
 <thead><tr><th>Feature</th><th class=n>Weight, standardised</th></tr></thead>
@@ -256,9 +291,12 @@ which is why it transfers where a rule id does not; it is worth roughly double o
 best single rule on %(portable_over_rule)s folds of %(n_folds)s, and beats the base rate on
 %(portable_over_base)s of %(n_folds)s, which is %(portable_times)s times chance. The gap of
 %(portable_gap)s average precision against the full feature set is the measured price of
-portability, and it is not small. Most of the signal in the full model was in <em>which</em> rules
-fired, not in the shape of the burst, which is itself an argument for the rule based approach this
-lab already has.</p>
+portability, and it carries a spread of %(portable_gap_sd)s across folds, so the difference
+between the two feature sets is smaller than the fold to fold noise on it. The portable set is
+ahead on %(portable_over_full)s of %(n_folds)s. An earlier version of this document read that
+gap the other way, as evidence that most of the signal lived in <em>which</em> rules fired; that
+reading was an artefact of a per-window alert cap set at 256, and section 2 has what replaced
+it.</p>
 
 <p>This is the model on the dashboard. It is fitted on %(m_train_eps)s episodes from
 %(m_train_nets)s networks, with its cutoff of %(m_thr)s chosen on %(m_thr_eps)s episodes from

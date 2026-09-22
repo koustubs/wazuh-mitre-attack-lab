@@ -1,5 +1,18 @@
 {
- "bias": -0.27665618,
+ "adaptiveLayer": {
+  "adaptiveAveragePrecision": 0.1691,
+  "adaptiveAveragePrecisionSd": 0.1019,
+  "caveat": "Measured on AIT, where alerts carry no ATT&CK tactic and none of this lab's rule ids, so the chain multiplier is 1.0 on every window and the credential access into persistence pairing this lab was built around is untested here. On that data both severity arms rank labelled intrusion windows below the model probability they contain, and the baseline layer recovers part of that gap. The mean gain is carried by one fold of the eight; the median is the number to read.",
+  "delta": -0.0036,
+  "deltaMedian": -0.0024,
+  "fixedAveragePrecision": 0.1727,
+  "folds": 8,
+  "foldsImproved": 3,
+  "modelAveragePrecision": 0.2206,
+  "protocol": "leave one network out, 8 folds, each network one endpoint with one baseline",
+  "warmupWindows": 24
+ },
+ "bias": -0.25160533,
  "caveat": "Fitted on eight public networks and never measured on this lab, whose own rules appear in no public dataset. Treat the score as triage ordering, not as a detection. A campaign is what would replace this sentence with a number.",
  "columns": [
   "n_alerts",
@@ -14,65 +27,65 @@
   "n_level_ge_7",
   "n_level_ge_10"
  ],
- "generated": "2026-09-21",
+ "generated": "2026-09-22",
  "generatedBy": "scoring/export-model.py",
  "mean": [
-  84.13444168,
-  203.79217659,
-  0.98743291,
-  1.24942486,
-  52.82920291,
-  43.63489986,
-  3.29480298,
-  7.08574421,
-  3.759708,
-  1.18811363,
-  1.1347035
+  102.71852142,
+  209.15400078,
+  0.47165622,
+  0.70552214,
+  53.70093247,
+  57.97217868,
+  3.34913793,
+  7.10867294,
+  3.76073885,
+  2.02625392,
+  1.96812957
  ],
  "measured": {
-  "averagePrecision": 0.1771,
-  "averagePrecisionSd": 0.0805,
+  "averagePrecision": 0.2202,
+  "averagePrecisionSd": 0.0994,
   "baseRate": 0.0211,
   "beatenBy": {
-   "GRU over the sequence": 0.1993,
-   "full feature set, which cannot be deployed here": 0.2486
+   "GRU over the sequence": 0.1881,
+   "full feature set, which cannot be deployed here": 0.2515
   },
   "beats": {
-   "best single rule": 0.1608
+   "best single rule": 0.16
   },
   "foldsAboveBaseRate": 8,
   "protocol": "leave one network out, 8 folds"
  },
  "model": "logistic regression, portable feature set",
  "sd": [
-  74.9022935,
-  101.41588637,
-  15.24937273,
-  15.55840788,
-  46.83174545,
-  49.78920185,
-  1.81288979,
-  3.2786711,
-  0.64023679,
-  1.66168092,
-  1.60198488
+  233.1768455,
+  101.20775595,
+  10.17847428,
+  10.38565187,
+  47.90227767,
+  221.18475668,
+  1.88556339,
+  3.29341797,
+  0.64061411,
+  15.31480749,
+  15.29538583
  ],
- "threshold": 0.852048,
+ "threshold": 0.770643,
  "thresholdChosenOn": {
   "attackEpisodes": 24,
   "episodes": 1276,
-  "f1": 0.3125,
+  "f1": 0.4103,
   "networks": [
    "wilson"
   ],
-  "precision": 0.625,
-  "recall": 0.2083
+  "precision": 0.5333,
+  "recall": 0.3333
  },
  "trainedOn": {
-  "attackEpisodes": 163,
-  "baseRate": 0.0213,
+  "attackEpisodes": 164,
+  "baseRate": 0.0214,
   "dataset": "AIT Alert Data Set",
-  "episodes": 7639,
+  "episodes": 7656,
   "licence": "CC-BY-4.0",
   "networks": [
    "fox",
@@ -86,17 +99,17 @@
   "source": "https://zenodo.org/records/8263181"
  },
  "weights": [
-  -1.06289605,
-  0.09880818,
-  0.43721427,
-  -0.41275725,
-  -0.02527208,
-  1.03326804,
-  0.47692431,
-  -0.10212543,
-  -0.66778907,
-  0.69386626,
-  -0.38791461
+  -0.86436557,
+  -0.14271988,
+  0.26573217,
+  -0.42692446,
+  0.1460659,
+  1.18742068,
+  0.57302408,
+  -0.20745865,
+  -0.45828393,
+  0.16098663,
+  -0.20026467
  ],
  "windowSeconds": 300.0
 }

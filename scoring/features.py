@@ -172,11 +172,14 @@ def shape_only(episodes):
     Eleven columns: how many alerts arrived, over how long, how close together, how tightly
     the busiest minute was packed, how many distinct signatures were involved, and how severe
     they were. Severity earns its place by being a property of the Wazuh ruleset rather than
-    of any one capture, so it transfers where a rule id does not, and measured over three
-    folds it roughly doubled average precision on its own.
+    of any one capture, so it transfers where a rule id does not. severity-ablation.py is
+    what that is worth rather than what it sounds like: dropping the four level columns costs
+    0.029 average precision and hurts on seven of the eight folds, and the four on their own
+    reach 86% of what all eleven reach.
 
-    What the whole set costs against tabular() is measurable, and evaluate.py measures it. The
-    gap between the two is the price of portability and it is not small.
+    What the whole set costs against tabular() is measurable, and evaluate.py measures it. It
+    is 0.031 average precision, against a 0.035 spread on that difference across folds, so the
+    price of portability is smaller than the fold to fold noise on it.
 
     No vocabulary argument, deliberately. There is nothing here for a vocabulary to index, and
     accepting one would imply otherwise.
@@ -257,15 +260,27 @@ def average_precision(y_true, score, positive=1):
     episode by score and asks how much of the ranking above each true positive is also true.
 
     Read it against the positive rate, which is what a coin weighted to the base rate scores.
+
+    Episodes that score identically are one rank, not an ordered run. The first version of this
+    walked the sorted array one row at a time, so a tied block was credited in whatever order
+    the rows happened to arrive in, and a model that emits only two distinct scores, which is
+    what a single-rule detector does, got an average precision that moved when the input was
+    reordered. Cutting the curve only where the score actually changes removes that: every
+    episode in a tied block is measured at the same precision, the one you would get by taking
+    the whole block. On data with no ties this is the same arithmetic as before.
     """
     s = np.asarray(score, dtype=np.float64)
     order = np.argsort(-s, kind="stable")
+    s = s[order]
     hit = (np.asarray(y_true)[order] == positive).astype(np.float64)
     total = hit.sum()
     if total == 0:
         return 0.0
-    precision = np.cumsum(hit) / np.arange(1, len(hit) + 1)
-    return float((precision * hit).sum() / total)
+    cuts = np.r_[np.flatnonzero(np.diff(s)), len(s) - 1]
+    found = np.cumsum(hit)[cuts]
+    precision = found / (cuts + 1.0)
+    recall = found / total
+    return float((np.diff(np.r_[0.0, recall]) * precision).sum())
 
 
 def pick_threshold(y_true, score, positive=1):

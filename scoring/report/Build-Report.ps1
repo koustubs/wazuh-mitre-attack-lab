@@ -18,8 +18,11 @@ read from is wrong, and the fix belongs in the step that produced it.
 #>
 [CmdletBinding()]
 param(
-    # Where the finished PDF lands. Default is docs/, beside the proposal.
-    [string]$OutFile = (Join-Path $PSScriptRoot '..\..\docs\Detection-Modelling-Report.pdf'),
+    # Where the finished PDF lands. Empty means docs/, beside the proposal; the default is
+    # resolved in the body rather than here, because $PSScriptRoot is not reliably populated
+    # inside a param block on Windows PowerShell 5.1 and an empty string reaches Join-Path
+    # as a parameter binding failure with no useful message.
+    [string]$OutFile,
     [switch]$Open
 )
 
@@ -27,6 +30,11 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $here = $PSScriptRoot
+if (-not $here) { $here = Split-Path -Parent $MyInvocation.MyCommand.Path }
+if (-not $here) { throw 'Cannot resolve the script directory. Run this script by path.' }
+if (-not $OutFile) {
+    $OutFile = Join-Path $here '..\..\docs\Detection-Modelling-Report.pdf'
+}
 $html = Join-Path $here 'report.html'
 
 Write-Host 'Reading the measurements...'

@@ -1,16 +1,17 @@
 """Leave one network out, across every network, so the comparison survives contact.
 
 baseline.py and train.py each hold out one fixed slice. That is enough to see whether a thing
-works at all and not enough to rank two things that finish close together. On the AIT split
-the logistic model and the GRU landed 0.046 apart in average precision with forty attack
-episodes in the test set, which is a difference well inside what a different pair of held out
-networks would move.
+works at all and not enough to rank two things that finish close together. Any single network
+here would have supported a different conclusion: the logistic model beats the GRU by 0.137
+average precision on harrison and loses to it by 0.002 on fox, and beats the deployed portable
+feature set by 0.088 on harrison while losing to it on three other networks. Which network was
+held out moves the answer further than which model was fitted.
 
 This runs the whole comparison once per network: train on the other seven, test on that one,
 and report the spread across all eight folds. A model that is genuinely better is better on
 most folds, not on the one that happened to be chosen.
 
-Expensive by design, at roughly twenty minutes on CPU. It is the difference between a number
+Expensive by design, at roughly fifty minutes on CPU. It is the difference between a number
 and a finding.
 
     python evaluate.py --data data/ait/episodes.jsonl
@@ -47,32 +48,50 @@ def fold(episodes, held, args, have=None):
     recomputed, so the expensive model is not refitted to fill in a cheap column.
     """
     have = dict(have or {})
+    names = sources_of(episodes)
     train = [e for e in episodes if e["source"] != held]
     test = [e for e in episodes if e["source"] == held]
     train.sort(key=lambda e: (e["source"], e["startedAt"]))
     test.sort(key=lambda e: e["startedAt"])
 
-    vocab = build_vocab(train, args.data)
-    Xtr, ytr = tabular(train, vocab)
-    Xte, yte = tabular(test, vocab)
-    Xtr_s, Xte_s = standardise(Xtr, Xte)
+    # Thresholds and early stopping are chosen on a whole network held back from training and
+    # nowhere else. The first version of this took the last 15% of the training rows and
+    # described them as a network, which they were not: the rows are sorted by source, so the
+    # tail was the back end of whichever network sorted last, cut partway through, and the
+    # operating point was chosen against a fragment of one network rather than a network.
+    # Rotating by one keeps the choice deterministic and lets each network validate exactly
+    # once across the eight folds, so no single network sets the operating point for all of
+    # them. The outer test network was never in either slice, then or now.
+    val_name = names[(names.index(held) + 1) % len(names)]
+    inner = [e for e in train if e["source"] != val_name]
+    val = [e for e in train if e["source"] == val_name]
 
-    # The validation slice is the tail of training, which under this grouping is a whole
-    # network held back. Thresholds and early stopping are chosen there and nowhere else.
-    cut = int(len(train) * 0.85)
+    # Everything a model learns comes from `inner`. Standardisation used to be fitted across
+    # the whole of training before the validation slice was cut out of it, so the validation
+    # network moved the column means that its own threshold was then chosen against.
+    vocab = build_vocab(inner, args.data)
+    Xin, yin = tabular(inner, vocab)
+    Xva, yva = tabular(val, vocab)
+    Xte, yte = tabular(test, vocab)
+    Xin_s, Xva_s, Xte_s = standardise(Xin, Xva, Xte)
+
     out = dict(have)
     out.update({"held": held, "n": len(test), "attack": int(yte.sum()),
-                "base": float(yte.mean())})
+                "base": float(yte.mean()), "validatedOn": val_name})
 
     if "rule_ap" not in out:
+        # The one rule baseline picks on all of training, validation network included. It has
+        # no operating point to choose, so there is nothing for that slice to leak into, and
+        # the comparison should not be won by starving the thing being compared against.
+        _, ytr = tabular(train, vocab)
         rule, _ = best_single_rule(train, ytr, vocab)
         out["rule"] = rule
         out["rule_f1"] = scores(yte, rule_only(test, rule))["f1"]
         out["rule_ap"] = average_precision(yte, rule_only(test, rule))
 
     if "log_ap" not in out:
-        w, b = fit_logistic(Xtr_s[:cut], ytr[:cut])
-        thr, _ = pick_threshold(ytr[cut:], score_logistic(Xtr_s[cut:], w, b))
+        w, b = fit_logistic(Xin_s, yin)
+        thr, _ = pick_threshold(yva, score_logistic(Xva_s, w, b))
         ste = score_logistic(Xte_s, w, b)
         out["log_f1"] = scores(yte, (ste >= thr).astype(np.int64))["f1"]
         out["log_ap"] = average_precision(yte, ste)
@@ -81,11 +100,12 @@ def fold(episodes, held, args, have=None):
     # between the two rows is the feature set and nothing else. This is the model that gets
     # exported, because it is the only one whose columns still mean something on this lab.
     if "shape_ap" not in out:
-        Str, _ = shape_only(train)
+        Sin, _ = shape_only(inner)
+        Sva, _ = shape_only(val)
         Ste, _ = shape_only(test)
-        Str_s, Ste_s = standardise(Str, Ste)
-        w, b = fit_logistic(Str_s[:cut], ytr[:cut])
-        thr, _ = pick_threshold(ytr[cut:], score_logistic(Str_s[cut:], w, b))
+        Sin_s, Sva_s, Ste_s = standardise(Sin, Sva, Ste)
+        w, b = fit_logistic(Sin_s, yin)
+        thr, _ = pick_threshold(yva, score_logistic(Sva_s, w, b))
         sh = score_logistic(Ste_s, w, b)
         out["shape_f1"] = scores(yte, (sh >= thr).astype(np.int64))["f1"]
         out["shape_ap"] = average_precision(yte, sh)
@@ -93,8 +113,8 @@ def fold(episodes, held, args, have=None):
     if "gru_ap" in out:
         return out
 
-    tr = to_tensors(train[:cut], args.max_len, vocab)
-    va = to_tensors(train[cut:], args.max_len, vocab)
+    tr = to_tensors(inner, args.max_len, vocab)
+    va = to_tensors(val, args.max_len, vocab)
     te = to_tensors(test, args.max_len, vocab)
     yv = va[3].numpy()
 
