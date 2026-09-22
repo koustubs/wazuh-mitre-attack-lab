@@ -2,7 +2,7 @@
 <#
 Build the progress update and print it to docs/Wazuh-Lab-Progress-Update.pdf.
 
-Two steps, same arrangement as 05-detection-modelling/report/Build-Report.ps1 and for the
+Two steps, same arrangement as scoring/report/Build-Report.ps1 and for the
 same reasons. build-update.py reads the measurement artefacts and writes update.html; this
 prints that page with Edge, which is already on every Windows 11 machine and therefore does
 not add a dependency that would stop this being regenerated.

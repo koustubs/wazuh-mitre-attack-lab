@@ -46,7 +46,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $keyPath = (Resolve-Path (Join-Path $PSScriptRoot '..\.lab-secrets\lab_ed25519')).Path
 if (-not (Test-Path -LiteralPath $keyPath)) { throw "Cannot find the lab SSH key at $keyPath" }
-$scenarioPath = (Resolve-Path (Join-Path $PSScriptRoot '..\..\linux\invoke-scenario.sh')).Path
+$scenarioPath = (Resolve-Path (Join-Path $PSScriptRoot '..\agents\linux\invoke-scenario.sh')).Path
 
 # Windows OpenSSH refuses a private key that other accounts can read. The key lives in a repo
 # folder, so tighten it here rather than leaving people to decode "UNPROTECTED PRIVATE KEY FILE".

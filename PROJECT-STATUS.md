@@ -37,11 +37,11 @@ what most of this file covers.
 
 | Step | Folder | State |
 | --- | --- | --- |
-| 1. Context analysis | `01-context-analysis/` | Complete. Includes a rendered PlantUML system context diagram. |
-| 2. Problem and scope | `02-scope-and-problem/` | Complete. Defines S1 to S3 and acceptance criteria R1 to R5. |
-| 3. Technical design | `03-technical-design/` | Complete. Stack pinned to Wazuh 4.14.x with the 5.0 beta transition acknowledged. |
-| 4. Implementation | `04-implementation/` | Complete. See `04-implementation/README.md` for full results. |
-| 5. Detection modelling | `05-detection-modelling/` | Beyond the brief. Measured and reported. See section 5b. |
+| 1. Context analysis | `docs/design/` | Complete. Includes a rendered PlantUML system context diagram. |
+| 2. Problem and scope | `docs/design/` | Complete. Defines S1 to S3 and acceptance criteria R1 to R5. |
+| 3. Technical design | `docs/design/` | Complete. Stack pinned to Wazuh 4.14.x with the 5.0 beta transition acknowledged. |
+| 4. Implementation | `04-implementation/` | Complete. See `docs/implementation.md` for full results. |
+| 5. Detection modelling | `scoring/` | Beyond the brief. Measured and reported. See section 5b. |
 
 The PDF sent to the mentor is at `docs/Wazuh-Threat-Detection-Proposal.pdf` and covers steps 1
 to 3 only. It predates the build and has not been regenerated.
@@ -75,10 +75,10 @@ and the guest hostnames must match exactly. Every script checks its hostname and
 on the wrong machine, so a mismatch fails loudly rather than silently doing the wrong thing.
 
 **Access.** SSH to the two Ubuntu machines as `labadmin` using the key in
-`04-implementation/host/.lab-secrets/lab_ed25519`. Windows has no SSH; use Hyper-V PowerShell
+`.lab-secrets/lab_ed25519`. Windows has no SSH; use Hyper-V PowerShell
 Direct from an elevated host session, which needs no network at all.
 
-**Credentials** live in `04-implementation/host/.lab-secrets/`, which is gitignored. It holds the
+**Credentials** live in `.lab-secrets/`, which is gitignored. It holds the
 SSH keypair, a random 20 character console password, and the three unattended install images.
 The Wazuh dashboard admin password is not stored there; it is in
 `/root/wazuh-lab-install/install.log` on the manager.
@@ -144,8 +144,8 @@ properly rather than answering with an opinion, and testing it properly meant ha
 a baseline, and an evaluation that could not flatter whatever got built.
 
 The data problem was the real one. The lab had nine recorded runs. Two routes were built:
-`04-implementation/linux/run-campaign.sh` to generate a night of labelled episodes here, and
-`05-detection-modelling/import-ait.py` to import the
+`agents/linux/run-campaign.sh` to generate a night of labelled episodes here, and
+`scoring/import-ait.py` to import the
 [AIT Alert Data Set](https://zenodo.org/records/8263181), 2.6 million real Wazuh alerts from
 eight simulated enterprise networks under CC-BY. The public route was taken first because it
 was an afternoon rather than a night, and because eight independent networks is a stronger
@@ -190,13 +190,13 @@ Four things that should be read with it:
 
 The deployed model runs inside the dashboard's existing SSH poll, scoring the last twelve five
 minute windows on every cycle at 4 ms for a full 800 record sample, with nothing installed on
-the manager. `05-detection-modelling/export-model.py` writes the eight fold result into the
+the manager. `scoring/export-model.py` writes the eight fold result into the
 model file itself, and the panel prints it, because a weights file with no measurement attached
 gets trusted more than it has earned. The panel also states permanently that the model has
 never been measured on this lab.
 
 All of step 5 is written up in [docs/Detection-Modelling-Report.pdf](docs/Detection-Modelling-Report.pdf),
-seven pages, rebuilt by `05-detection-modelling/report/Build-Report.ps1`. Every figure in it is
+seven pages, rebuilt by `scoring/report/Build-Report.ps1`. Every figure in it is
 read from a measurement artefact or produced by a run the build makes itself. Writing it caught
 a real error: the operating point above had been quoted with two figures from different splits
 in the same sentence.
@@ -278,9 +278,9 @@ wazuh-threat-detection/
   docs/
     fresh-clone.md              what a clone does not contain, and how to rebuild it
     collecting-a-dataset.md     how to record a labelled campaign, and when it is worth it
-  01-context-analysis/          step 1, with system context diagram
-  02-scope-and-problem/         step 2, scenarios and acceptance criteria
-  03-technical-design/          step 3, stack and approach
+  docs/design/          step 1, with system context diagram
+  docs/design/         step 2, scenarios and acceptance criteria
+  docs/design/          step 3, stack and approach
   04-implementation/
     README.md                   step 4 results, the main technical record
     deployment-guide.md         build order, hostnames, addresses
@@ -316,7 +316,7 @@ wazuh-threat-detection/
       rule-checks.json          synthetic rule check output
       live-runs/                live run records
       campaigns/                gitignored: records pulled off the endpoint by Sync-LabCampaign
-  05-detection-modelling/
+  scoring/
     README.md                   step 5, the measured answer on whether a model beats the rules
     alert_stream.py             the episode contract and the vocabulary a dataset carries
     import-ait.py               the AIT alert data set into episodes
@@ -424,11 +424,11 @@ produced a three page PDF of both.
 five code issues that have not been fixed. None of them reverses the headline result that
 logistic regression beats the sequence model on all eight folds.
 
-- `05-detection-modelling/features.py` ranks equal scores by input order, so a binary
+- `scoring/features.py` ranks equal scores by input order, so a binary
   single-rule score gets an order-dependent average precision. Grouping ties gives about
   0.1645 for the single-rule baseline against the stored 0.1608. Every figure derived from
   that column should be recomputed.
-- `05-detection-modelling/evaluate.py` describes a whole-network validation holdout but takes
+- `scoring/evaluate.py` describes a whole-network validation holdout but takes
   an 85% row cut, which splits a network in all eight folds, and standardisation is fitted
   before that inner split. The outer test networks are still separate, so this is not label
   leakage into the test set, but the validation independence claim is wrong as written.

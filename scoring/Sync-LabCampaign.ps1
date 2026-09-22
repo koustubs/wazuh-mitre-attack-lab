@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     run-campaign.sh appends a line per run as it goes. This brings those lines across and keeps
-    them under 04-implementation\evidence\campaigns\, which .gitignore already excludes.
+    them under evidence\campaigns\, which .gitignore already excludes.
 
     The point of copying continuously rather than once at the end is durability. If the host
     loses power, or the indexer comes back needing a shard repair, the labelled dataset is
@@ -41,7 +41,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$SshKey = Join-Path $PSScriptRoot '.lab-secrets\lab_ed25519'
+$SshKey = Join-Path $PSScriptRoot '..\.lab-secrets\lab_ed25519'
 $Destination = Join-Path $PSScriptRoot '..\evidence\campaigns'
 $RemoteRoot = '/var/log/wazuh-lab/campaign'
 

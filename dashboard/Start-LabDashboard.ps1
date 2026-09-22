@@ -435,7 +435,7 @@ print(json.dumps(out))
 # Missing either file is not an error. The markers stay unsubstituted, the remote script finds
 # no model, and the panel says the model file is absent. A lab that has never run the
 # modelling step still gets a working dashboard.
-$script:ScorerPath = Join-Path $PSScriptRoot '..\..\..\05-detection-modelling\scorer'
+$script:ScorerPath = Join-Path $PSScriptRoot '..\scoring\scorer'
 $script:ScorerLoaded = $false
 try {
     $modelPath = Join-Path $script:ScorerPath 'model.json'
@@ -467,7 +467,7 @@ $script:StatusB64 = [Convert]::ToBase64String(
 # re-reading this file on every poll would be watching for something that cannot change underneath.
 $script:LabRules = @()
 try {
-    $rulePath = Join-Path $PSScriptRoot '..\..\manager\lab_rules.xml'
+    $rulePath = Join-Path $PSScriptRoot '..\manager\lab_rules.xml'
     if (Test-Path -LiteralPath $rulePath) {
         [xml]$ruleDoc = Get-Content -LiteralPath $rulePath -Raw
         foreach ($rule in $ruleDoc.SelectNodes('//rule')) {
@@ -717,7 +717,7 @@ function Invoke-LabScenario {
         } -ArgumentList $LabSshKey, $LabSshUser, $LabVms[$VmName].Address, $Scenario, $Mode | Out-Null
     } else {
         $passwordFile = Join-Path $PSScriptRoot '..\.lab-secrets\console-password.txt'
-        $scriptFile = Join-Path $PSScriptRoot '..\..\windows\Invoke-Scenario.ps1'
+        $scriptFile = Join-Path $PSScriptRoot '..\agents\windows\Invoke-Scenario.ps1'
         if (-not (Test-Path -LiteralPath $passwordFile)) { throw 'The console password is missing from .lab-secrets.' }
         if (-not (Test-Path -LiteralPath $scriptFile)) { throw 'The Windows scenario driver is missing from the repository.' }
         Start-Job -Name $label -ScriptBlock {
@@ -1078,7 +1078,7 @@ function ConvertTo-LabPdf {
     <#
     Print an HTML string to a PDF with Edge, headless.
 
-    05-detection-modelling/report/Build-Report.ps1 does the same thing and they are deliberately
+    scoring/report/Build-Report.ps1 does the same thing and they are deliberately
     not shared. That one is a build step run by hand in the modelling directory; this one is
     inside a server that has to keep working on a clone where the modelling step was never run.
     Putting the helper in either place would make the other depend on a directory it cannot
@@ -1144,7 +1144,7 @@ function Export-LabFindings {
     $findings = @($sc.findings)
     $stamp = Get-Date
     $name = 'findings-' + $stamp.ToString('yyyyMMdd-HHmmss') + '.pdf'
-    $out = Join-Path $PSScriptRoot ('..\..\evidence\findings\' + $name)
+    $out = Join-Path $PSScriptRoot ('..\evidence\findings\' + $name)
     $out = [IO.Path]::GetFullPath($out)
 
     $css = @'
@@ -1279,12 +1279,12 @@ severity = min(100, base &times; chain)</span>
 </table>
 <p>The weights are judgement rather than fitted parameters, and they live in one file so that
 disagreeing with them is an edit rather than an argument:
-<code>05-detection-modelling/scorer/score.py</code>. Bands are informational below 25, then low,
+<code>scoring/scorer/score.py</code>. Bands are informational below 25, then low,
 elevated at 50, high at 70 and critical at 85.</p>
 
 <footer>
 Written by the lab dashboard from the poll on screen at the time, so this document and that screen
-agree. Method and measurements are in the repository under <code>05-detection-modelling/</code>,
+agree. Method and measurements are in the repository under <code>scoring/</code>,
 and the full modelling report is at <code>docs/Detection-Modelling-Report.pdf</code>.
 </footer>
 </body></html>

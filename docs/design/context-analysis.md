@@ -2,7 +2,7 @@
 
 > Written before any of the lab existed and left as submitted, so it reads as a proposal
 > throughout. What was actually built is in
-> [04-implementation/README.md](../04-implementation/README.md), and where the two disagree the
+> [docs/implementation.md](../implementation.md), and where the two disagree the
 > implementation is what happened.
 
 ## My understanding of the project

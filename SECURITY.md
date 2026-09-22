@@ -4,7 +4,7 @@
 
 There is no SSH key, no password, no agent key and no certificate in this repository or in its
 history. Every credential the lab uses is generated locally by `New-LabSecrets.ps1` into
-`04-implementation/host/.lab-secrets/`, which is excluded by `.gitignore` and has never been
+`.lab-secrets/`, which is excluded by `.gitignore` and has never been
 committed.
 
 Raw evidence is excluded for the same reason. Live runs record account names, source addresses
@@ -18,7 +18,7 @@ If you clone this, you start with no credentials. That is intended. See
 
 This is a detection lab, so some of it looks like the thing it detects. Worth being explicit:
 
-- `linux/invoke-scenario.sh` and `windows/Invoke-Scenario.ps1` create a local account, make failed
+- `agents/linux/invoke-scenario.sh` and `agents/windows/Invoke-Scenario.ps1` create a local account, make failed
   logon attempts against it, and write a cron entry or scheduled task. They do this to generate
   the events the rules are written for. Both refuse to run on any host other than the lab
   endpoint they belong to, clean up everything they created through a trap, and write a record of

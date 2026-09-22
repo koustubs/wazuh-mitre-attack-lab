@@ -2,11 +2,11 @@
 
 > Written before the build and left as submitted, so the requirements below are proposed rather
 > than met. They were all met: see
-> [04-implementation/README.md](../04-implementation/README.md) for R1 to R5 against evidence,
-> and [PROJECT-STATUS.md](../PROJECT-STATUS.md) for what moved after this was written.
+> [docs/implementation.md](../implementation.md) for R1 to R5 against evidence,
+> and [PROJECT-STATUS.md](../../PROJECT-STATUS.md) for what moved after this was written.
 >
 > One boundary below was later crossed on purpose. Machine learning is excluded from the first
-> version, and [step 5](../05-detection-modelling/README.md) does it anyway, because the mentor
+> version, and [step 5](../../scoring/README.md) does it anyway, because the mentor
 > raised it after this document was agreed. It sits outside the first version rather than
 > inside it. Its result is narrower than "a model does not beat the rules": logistic
 > regression does beat the best single rule, 0.249 average precision against 0.161, and it

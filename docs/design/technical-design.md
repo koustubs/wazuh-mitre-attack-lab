@@ -3,7 +3,7 @@
 **This stack is not confirmed for implementation. It needs further research, feasibility checks, and mentor review.** I have not deployed or tested the prototype yet.
 
 > Left as submitted, which is why everything below is conditional. The stack was confirmed
-> almost unchanged and built: see [04-implementation/README.md](../04-implementation/README.md).
+> almost unchanged and built: see [docs/implementation.md](../implementation.md).
 > Two things here did not survive contact, and both are marked where they appear.
 
 ## Proposed direction
@@ -54,7 +54,7 @@ Rule IDs, thresholds and the parent SID need confirming against my actual instal
 > 5716, so hanging a frequency rule off 5716 matches nothing. The built rule is 100111 with
 > `<if_matched_sid>100110</if_matched_sid>`, where 100110 sits on 5760. Confirming the parent
 > SID against a real install was the right instinct and it is why this was caught. See
-> [lab_rules.xml](../04-implementation/manager/lab_rules.xml).
+> [lab_rules.xml](../../manager/lab_rules.xml).
 
 ## Working methods
 
@@ -85,7 +85,7 @@ I would use `wazuh-logtest` for parsing and rule checks, followed by live endpoi
 - Review relevant Atomic Red Team tests, including prerequisites, actions, and cleanup. [This is the test library being considered](https://github.com/redcanaryco/atomic-red-team).
   > **Did not survive contact.** Atomic Red Team was not used. The three scenarios are small
   > enough to drive from purpose-written scripts that clean up after themselves
-  > (`04-implementation/linux/invoke-scenario.sh` and its Windows counterpart), and those also
+  > (`agents/linux/invoke-scenario.sh` and its Windows counterpart), and those also
   > run a benign comparison, which the library does not. Pulling in a dependency to execute
   > six commands would have added a supply chain to a lab that has none.
 - Agree thresholds, retention, schedule, and report format. Define lab access controls, agent enrolment, and authenticated connections.

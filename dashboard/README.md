@@ -101,7 +101,7 @@ not how bad it is: forty level 3 alerts and one level 12 beside a new account ca
 it. Severity is a 0 to 100 composite of six terms with the model as one of them, and the lab's
 own case, credential access followed by persistence, earns a multiplier because that pairing is a
 chain rather than two events. On the worked example in
-[the report](../../../docs/Detection-Modelling-Report.pdf), a quiet window of session opens
+[the report](../docs/Detection-Modelling-Report.pdf), a quiet window of session opens
 scores 16, a brute force burst that trips rule 100111 scores 54, and the same burst with an
 account creation beside it scores 78. The rules in step 4 cannot tell those last two apart: they
 report a brute force alert and an account creation alert, and nothing saying they belong
@@ -109,7 +109,7 @@ together. Those three numbers come out of `score.py` when the report is built, s
 and the PDF cannot disagree.
 
 The weights are judgement rather than fitted parameters, and they live in one place,
-`05-detection-modelling/scorer/score.py`, so disagreeing with them is an edit rather than an
+`scoring/scorer/score.py`, so disagreeing with them is an edit rather than an
 argument. The info mark beside the title opens the method and the formula: hover to read it,
 click to pin it, click anywhere else to close it. It sits in the panel header rather than in the
 polled region so that a redraw every three seconds cannot close it while somebody is reading.
@@ -125,7 +125,7 @@ endpoint, and everything there is gitignored.
 That path is the longest thing here between a change and its consequence: a Python block inside
 a PowerShell here-string, two files substituted into it, base64 encoded, over SSH, onto the
 manager, back as JSON, into a browser. A mistake anywhere in it looks the same from here, which
-is a panel that is quietly wrong. `../../tests/test_dashboard_scoring.py` assembles and runs it
+is a panel that is quietly wrong. `../tests/test_dashboard_scoring.py` assembles and runs it
 exactly as this script does, against alerts written so the answers are known in advance. No VM,
 no SSH, about a second. Run it before touching the remote script, `score.py` or `model.json`.
 
@@ -144,7 +144,7 @@ here. Its own measurement travels in the model file and is printed on the panel:
 0.177 against a 0.021 base rate, on networks it had never seen. That is eight times better than
 chance and well short of an alerting rule, so the panel is triage ordering and says as much.
 
-The model file is read from `05-detection-modelling/scorer/` at startup and travels inside the
+The model file is read from `scoring/scorer/` at startup and travels inside the
 same payload as everything else, so nothing is installed on the manager. A clone that has never
 run the modelling step gets the rest of the dashboard and a panel saying the model is absent.
 

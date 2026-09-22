@@ -108,8 +108,8 @@ and maps to T1110.001. Both are kept because they describe different behaviour.
 ## Building the lab
 
 `deployment-guide.md` has the build order, host names and static addresses. The lab is created
-by `host/New-Lab.ps1`, then provisioned unattended by `host/New-LabSeeds.ps1` for the two Ubuntu
-machines and `host/New-WindowsSeed.ps1` for Windows. `host/LabConsole.ps1` drives a VM console
+by `setup/New-Lab.ps1`, then provisioned unattended by `setup/New-LabSeeds.ps1` for the two Ubuntu
+machines and `setup/New-WindowsSeed.ps1` for Windows. `setup/LabConsole.ps1` drives a VM console
 over WMI, which is only needed to add `autoinstall` to the Ubuntu boot line.
 
 ## Delivery through to the indexer

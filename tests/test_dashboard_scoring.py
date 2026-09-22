@@ -9,9 +9,9 @@ So it is assembled and run here exactly as Start-LabDashboard.ps1 assembles it, 
 written to make the answers knowable in advance. This needs no VM, no SSH and no manager. It
 takes about a second and it is the check to run before touching any of:
 
-    04-implementation/host/lab-dashboard/Start-LabDashboard.ps1   the remote script
-    05-detection-modelling/scorer/score.py                        features and severity
-    05-detection-modelling/scorer/model.json                      the fitted model
+    dashboard/Start-LabDashboard.ps1   the remote script
+    scoring/scorer/score.py                        features and severity
+    scoring/scorer/model.json                      the fitted model
 
     python test_dashboard_scoring.py
     python test_dashboard_scoring.py --payload out.json   # also dump what the manager returns
@@ -33,9 +33,9 @@ import sys
 import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
-ROOT = HERE.parent.parent
-DASHBOARD = ROOT / "04-implementation/host/lab-dashboard/Start-LabDashboard.ps1"
-SCORER = ROOT / "05-detection-modelling/scorer"
+ROOT = HERE.parent
+DASHBOARD = ROOT / "dashboard/Start-LabDashboard.ps1"
+SCORER = ROOT / "scoring/scorer"
 
 # The lab's own rules, with the ATT&CK metadata Wazuh attaches from lab_rules.xml.
 MITRE = {

@@ -691,7 +691,7 @@ function renderScoring(data) {
   if (!s) return stop("The manager did not return a score.");
   if (s.note === "no-model") {
     box.innerHTML = `<span class="faint">No model on this machine. Run
-      <code>python export-model.py</code> in <code>05-detection-modelling</code> to fit one.
+      <code>python export-model.py</code> in <code>scoring</code> to fit one.
       Everything else on this page works without it.</span>`;
     findBox.innerHTML = "";
     setExportEnabled(false);
@@ -877,7 +877,7 @@ severity = min(100, base · chain)</span>
     <p>A window reaching elevated or above becomes a finding, and findings are what the export
     button writes out. The weights are judgement rather than fitted parameters, and they live in
     one file so that disagreeing with them is an edit rather than an argument:
-    <span class="mono">05-detection-modelling/scorer/score.py</span>.</p>
+    <span class="mono">scoring/scorer/score.py</span>.</p>
     <span class="pinhint">Click the mark to keep this open. Click anywhere else to close it.</span>`;
 }
 

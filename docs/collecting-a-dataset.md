@@ -5,10 +5,10 @@ The six rules in this lab fire on single events in isolation. Anything that reas
 like per user, needs examples to learn from, and the lab has nine recorded runs. That is a
 handful, not a dataset.
 
-`04-implementation/linux/run-campaign.sh` turns one run into a night of them.
+`agents/linux/run-campaign.sh` turns one run into a night of them.
 
 > **Read this next to the public data first.** A campaign is no longer the only way to get
-> numbers. `05-detection-modelling/import-ait.py` brings in 2.6 million labelled Wazuh alerts
+> numbers. `scoring/import-ait.py` brings in 2.6 million labelled Wazuh alerts
 > from eight networks, which is what the modelling results are now measured on, and it took an
 > afternoon rather than a night.
 >
@@ -83,7 +83,7 @@ sudo bash run-campaign.sh stop
 On the host, beside it:
 
 ```powershell
-.\04-implementation\host\Sync-LabCampaign.ps1 -Watch
+.\setup\Sync-LabCampaign.ps1 -Watch
 ```
 
 ## Picking the window

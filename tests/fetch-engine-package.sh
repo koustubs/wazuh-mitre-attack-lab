@@ -10,10 +10,10 @@
 # does not match is deleted rather than kept, because a rule suite running against an unverified
 # engine proves nothing.
 #
-# Run as: wsl -d Ubuntu --exec bash 04-implementation/tests/fetch-engine-package.sh
+# Run as: wsl -d Ubuntu --exec bash tests/fetch-engine-package.sh
 set -euo pipefail
 
-project=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+project=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 name=wazuh-manager_4.14.7-1_amd64.deb
 url=https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-manager/$name
 expected=1edd93f49ea1d89edcb7c17eeec750e99f685bc9f88d3c71f7972267c9442de0
@@ -46,4 +46,4 @@ fi
 
 mv -- "$part" "$target"
 echo "Verified and cached: $target"
-echo 'Next: wsl -d Ubuntu -u root --exec bash 04-implementation/tests/prepare-engine-check.sh'
+echo 'Next: wsl -d Ubuntu -u root --exec bash tests/prepare-engine-check.sh'

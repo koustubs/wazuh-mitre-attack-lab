@@ -203,7 +203,7 @@
    "n_level_ge_10"
   ],
   "generated": "2026-09-21",
-  "generatedBy": "05-detection-modelling/export-model.py",
+  "generatedBy": "scoring/export-model.py",
   "mean": [
    84.13444168,
    203.79217659,

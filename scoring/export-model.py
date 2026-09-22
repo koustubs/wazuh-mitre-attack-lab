@@ -135,7 +135,7 @@ def main():
                    "not as a detection. A campaign is what would replace this sentence with a "
                    "number."),
         "generated": datetime.date.today().isoformat(),
-        "generatedBy": "05-detection-modelling/export-model.py",
+        "generatedBy": "scoring/export-model.py",
     }
 
     out = pathlib.Path(a.out)

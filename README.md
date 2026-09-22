@@ -10,11 +10,11 @@ detection cases are proven on live endpoints, and alerts are searchable in the i
 
 | Step | Document | Status |
 | --- | --- | --- |
-| 1. Understand and analyse context | [Context analysis](01-context-analysis/context-analysis.md) and [system context diagram](01-context-analysis/system-context.png) | Complete |
-| 2. Define scope and problem | [Problem statement and scope](02-scope-and-problem/problem-and-scope.md) | Complete |
-| 3. Establish technical building blocks and stack | [Stack and approach](03-technical-design/README.md) | Complete |
-| 4. Build the functionality | [Implementation and results](04-implementation/README.md) | Complete |
-| 5. Detection modelling | [Can a model read a run of alerts?](05-detection-modelling/README.md) | Measured, reported, and scoring live |
+| 1. Understand and analyse context | [Context analysis](docs/design/context-analysis.md) and [system context diagram](docs/design/system-context.png) | Complete |
+| 2. Define scope and problem | [Problem statement and scope](docs/design/problem-and-scope.md) | Complete |
+| 3. Establish technical building blocks and stack | [Stack and approach](docs/design/technical-design.md) | Complete |
+| 4. Build the functionality | [Implementation and results](docs/implementation.md) | Complete |
+| 5. Detection modelling | [Can a model read a run of alerts?](scoring/README.md) | Measured, reported, and scoring live |
 | | [Report (PDF)](docs/Detection-Modelling-Report.pdf) | Dataset, training process, every model tried, what won |
 
 Step 5 is beyond the four step brief. It exists because the mentor raised using PyTorch to find
@@ -22,7 +22,7 @@ patterns, and that deserved a measured answer rather than an opinion.
 
 For the full picture including what was hit along the way and what comes next, read
 [PROJECT-STATUS.md](PROJECT-STATUS.md). To rebuild the lab, start with the
-[deployment guide](04-implementation/deployment-guide.md). Cloning this rather than reading it,
+[deployment guide](docs/setup.md). Cloning this rather than reading it,
 start with [what a fresh clone does not contain](docs/fresh-clone.md).
 
 ## Running it
@@ -41,7 +41,7 @@ connect to, and takes it down in the reverse order so the indexer closes cleanly
 by itself: every VM is created with `AutomaticStartAction Nothing`, and the dashboard has no code
 path that can change that to anything else.
 
-See [the dashboard notes](04-implementation/host/lab-dashboard/README.md).
+See [the dashboard notes](dashboard/README.md).
 
 ## What was built
 
@@ -65,7 +65,7 @@ mappings resolved. A 90 day retention policy is in place.
 The frequency rules were also tested at their edges. The 120 second window genuinely expires, and
 counting is per agent rather than global, so the rule will not correlate one campaign spread
 across several machines. Both results are recorded in
-[validation status](04-implementation/evidence/validation-status.md).
+[validation status](evidence/validation-status.md).
 
 ## Does a model beat the rules?
 
@@ -97,7 +97,7 @@ marked deployed is the feature set that survives the move: eleven columns descri
 and severity of a window with no rule identity in them. It keeps 71% of the full model and beats the best
 single rule, and the gap is the measured price of portability.
 
-That one runs live. The [lab dashboard](04-implementation/host/lab-dashboard/README.md) scores
+That one runs live. The [lab dashboard](dashboard/README.md) scores
 the last twelve five minute windows on every poll and prints the model's provenance and its
 measured average precision on the panel, permanently, because it has never been measured on this
 lab.
@@ -106,7 +106,7 @@ Two caveats kept in the open. None of these is deployable as an alerting rule: o
 the winner holds perfect precision down to recall 0.375, and catching half the intrusions costs
 119 false positives. And the public data contains none of rules 100100 to 100113, so this
 measures the method rather than this lab's own detections.
-[The full write-up](05-detection-modelling/README.md) covers both, and
+[The full write-up](scoring/README.md) covers both, and
 [the report](docs/Detection-Modelling-Report.pdf) is the seven page version with every figure
 read off a measurement.
 

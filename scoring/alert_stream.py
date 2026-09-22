@@ -4,7 +4,7 @@ Both the synthetic generator and the real exporter have to agree on what an epis
 once it has become alerts, or the model trained on one will not read the other. That contract
 lives here rather than being written twice.
 
-The rule ids are the lab's own, from 04-implementation/manager/lab_rules.xml, plus the two
+The rule ids are the lab's own, from manager/lab_rules.xml, plus the two
 built-in PAM rules the standing accounts trip when they open and close a session.
 """
 from __future__ import annotations

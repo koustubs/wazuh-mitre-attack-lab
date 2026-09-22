@@ -35,18 +35,18 @@ Hyper-V VM name. Setting only the VM name is the easy mistake here.
 **0. Create the lab credentials.** Nothing else works without them, and a fresh clone has none.
 
 ```
-.\host\New-LabSecrets.ps1
+.\setup\New-LabSecrets.ps1
 ```
 
 This writes the SSH keypair, the console password and its SHA-512 crypt hash into
-`host\.lab-secrets\`, which is gitignored. Both seed builders in the next step read those files
+`.lab-secrets\`, which is gitignored. Both seed builders in the next step read those files
 and fail immediately if they are missing. It refuses to overwrite an existing set without
 `-Force`, because replacing the key locks you out of any VM already built with it.
 
 **1. Create the VMs.** From an elevated prompt:
 
 ```
-.\host\New-Lab.ps1 -UbuntuIso <path> -WindowsIso <path> -StorageRoot D:\Wazuh-Lab
+.\setup\New-Lab.ps1 -UbuntuIso <path> -WindowsIso <path> -StorageRoot D:\Wazuh-Lab
 ```
 
 This creates the switch, the NAT, and three Generation 2 VMs. The Windows VM gets a key
@@ -91,7 +91,7 @@ the cron change has no baseline to compare against.
 prompt:
 
 ```
-.\windows\Install-Agent.ps1 -ManagerAddress 172.29.70.10 -AgentKeyFile .\wazuh-windows.key
+.\agents\windows\Install-Agent.ps1 -ManagerAddress 172.29.70.10 -AgentKeyFile .\wazuh-windows.key
 ```
 
 This enables three audit subcategories that are off by default. Without them the events simply
@@ -113,8 +113,8 @@ The scripts clean up after themselves, but a checkpoint is the reliable reset.
 ## Running the scenarios
 
 ```
-.\windows\Invoke-Scenario.ps1 -Scenario S1            # and S2, S3
-.\windows\Invoke-Scenario.ps1 -Scenario S1 -Comparison
+.\agents\windows\Invoke-Scenario.ps1 -Scenario S1            # and S2, S3
+.\agents\windows\Invoke-Scenario.ps1 -Scenario S1 -Comparison
 
 sudo bash linux/invoke-scenario.sh S1 test
 sudo bash linux/invoke-scenario.sh S1 comparison
@@ -147,9 +147,9 @@ reverses it, endpoints first and the manager last, so the indexer is the final t
 It will not start anything by itself. Opening it is read-only, and the only autostart value it can
 write is `Nothing`.
 
-Run `host/lab-dashboard/Enable-LabDashboard.ps1` once, after the lab is built, so the dashboard
+Run `dashboard/Enable-LabDashboard.ps1` once, after the lab is built, so the dashboard
 can also read alerts, agent state and the indexer. Without it the dashboard still works and says
-which of those it cannot read. See `host/lab-dashboard/README.md`.
+which of those it cannot read. See `dashboard/README.md`.
 
 ## Worth knowing
 

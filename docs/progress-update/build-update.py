@@ -10,9 +10,9 @@ Same rule as the modelling report. No figure is typed in here. Every number is r
 the artefact that produced it, so the document cannot drift away from the measurements the
 way the README already did once this week. If a figure looks wrong, the artefact is wrong.
 
-    05-detection-modelling/data/ait/folds.jsonl   the eight fold results
-    05-detection-modelling/scorer/model.json      the deployed model and its provenance
-    05-detection-modelling/scorer/score.py        the severity weights and bands
+    scoring/data/ait/folds.jsonl   the eight fold results
+    scoring/scorer/model.json      the deployed model and its provenance
+    scoring/scorer/score.py        the severity weights and bands
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ import statistics
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
-MODELLING = ROOT / "05-detection-modelling"
+MODELLING = ROOT / "scoring"
 
 
 def read_folds():

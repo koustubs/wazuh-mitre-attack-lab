@@ -23,7 +23,7 @@ The seven page version of all of this, for a reader who is not going to clone th
 ## The order of work, and why
 
 1. **Get data.** Either `import-ait.py` for the public set, or
-   `04-implementation/linux/run-campaign.sh` for the lab's own. See
+   `agents/linux/run-campaign.sh` for the lab's own. See
    [docs/collecting-a-dataset.md](../docs/collecting-a-dataset.md) for what each can answer.
 2. **Baseline.** `baseline.py`. Non-neural, and the number everything else has to beat.
 3. **Model.** `train.py`. Last, and smallest.
@@ -166,7 +166,7 @@ measurement gets trusted more than it has earned. The export refuses to write if
 and `features.py` disagree about what the features are, because that failure looks exactly like a
 working dashboard.
 
-The [lab dashboard](../04-implementation/host/lab-dashboard/README.md) scores the last twelve
+The [lab dashboard](../dashboard/README.md) scores the last twelve
 windows on every poll, inside the SSH round trip it was already making. 4 ms for the manager's
 full 800 record sample, in plain Python, with nothing installed on the manager. The panel prints
 the model's provenance and its measured average precision underneath itself and says that it has

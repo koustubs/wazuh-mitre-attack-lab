@@ -644,22 +644,22 @@ The report builder uses saved measurement artefacts and a generated `figures.jso
 | Location | Responsibility / contents | Lifecycle |
 | --- | --- | --- |
 | `Lab.cmd` | Entry point for normal host dashboard operation. | Versioned source. |
-| `01-context-analysis/` | Context Markdown and PlantUML/PNG/SVG proposal diagram. | Historical design. |
-| `02-scope-and-problem/` | Scenarios and acceptance requirements. | Versioned requirements. |
-| `03-technical-design/` | Submitted stack proposal and later annotations. | Historical design with implementation links. |
-| `04-implementation/host/` | Host preflight, secrets/seed builders, provisioning, console utility and campaign sync. | Versioned tooling. |
-| `04-implementation/host/lab-dashboard/` | PowerShell server, HTML UI, launcher and guest-permission setup. | Versioned application. |
-| `04-implementation/host/.lab-secrets/` | SSH keys, console credentials and installation seeds. | Local only; excluded from Git. |
-| `04-implementation/manager/` | Pinned installation, rule deployment, native dashboard setup and custom rules. | Versioned configuration. |
-| `04-implementation/windows/` | Windows agent installer and real-event scenario driver. | Versioned guest tooling. |
-| `04-implementation/linux/` | Linux agent configuration, scenario driver and campaign runner. | Versioned guest tooling. |
-| `04-implementation/tests/` | Engine acquisition/setup, rule tests, frequency checks and dashboard-scoring tests. | Development verification; not runtime services. |
-| `04-implementation/evidence/` | Live runs, campaigns, findings and test outputs. | Raw files ignored; README and validation status are versioned. |
-| `05-detection-modelling/` | Dataset contract, import/generation, features, baselines, GRU, evaluation and export. | Offline workstation code. |
-| `05-detection-modelling/data/` | Public archives, parsed caches, episodes and folds. | Generated or downloaded; ignored. |
-| `05-detection-modelling/models/` | PyTorch checkpoints. | Offline experiments; ignored. |
-| `05-detection-modelling/scorer/` | Standard-library inference code and portable JSON weights/provenance. | Versioned deployment artefacts. |
-| `05-detection-modelling/report/` | Report template, figures and builders. | Source and measurements; generated report HTML ignored. |
+| `docs/design/` | Context Markdown and PlantUML/PNG/SVG proposal diagram. | Historical design. |
+| `docs/design/` | Scenarios and acceptance requirements. | Versioned requirements. |
+| `docs/design/` | Submitted stack proposal and later annotations. | Historical design with implementation links. |
+| `setup/` | Host preflight, secrets/seed builders, provisioning, console utility and campaign sync. | Versioned tooling. |
+| `dashboard/` | PowerShell server, HTML UI, launcher and guest-permission setup. | Versioned application. |
+| `.lab-secrets/` | SSH keys, console credentials and installation seeds. | Local only; excluded from Git. |
+| `manager/` | Pinned installation, rule deployment, native dashboard setup and custom rules. | Versioned configuration. |
+| `agents/windows/` | Windows agent installer and real-event scenario driver. | Versioned guest tooling. |
+| `agents/linux/` | Linux agent configuration, scenario driver and campaign runner. | Versioned guest tooling. |
+| `tests/` | Engine acquisition/setup, rule tests, frequency checks and dashboard-scoring tests. | Development verification; not runtime services. |
+| `evidence/` | Live runs, campaigns, findings and test outputs. | Raw files ignored; README and validation status are versioned. |
+| `scoring/` | Dataset contract, import/generation, features, baselines, GRU, evaluation and export. | Offline workstation code. |
+| `scoring/data/` | Public archives, parsed caches, episodes and folds. | Generated or downloaded; ignored. |
+| `scoring/models/` | PyTorch checkpoints. | Offline experiments; ignored. |
+| `scoring/scorer/` | Standard-library inference code and portable JSON weights/provenance. | Versioned deployment artefacts. |
+| `scoring/report/` | Report template, figures and builders. | Source and measurements; generated report HTML ignored. |
 | `docs/` | Proposal, model report, deployment support documents and this architecture. | Reviewable project documentation. |
 | `.cache/` | Downloaded engine packages and other build intermediates. | Ignored local cache. |
 | Manager `/var/ossec/etc/` | Runtime rules, main configuration and agent identity keys. | Guest operational configuration. |
