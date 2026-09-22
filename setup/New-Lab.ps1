@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 #requires -RunAsAdministrator
 <#
     Creates the lab network and the profile's virtual machines, and attaches everything they
@@ -61,8 +61,14 @@ foreach ($name in $vms.Keys) {
         # Its directory is almost certainly there too. Saying so as well would be one more line
         # about the same VM, and the fix for both is the same.
         $problems += "A VM called $name already exists. Remove it with setup\Remove-Lab.ps1, or rename it."
-    } elseif (Test-Path -LiteralPath $existingDir) {
-        $problems += "$existingDir already holds something, though no VM uses it. Review it before this writes a disk there."
+    } elseif ((Test-Path -LiteralPath $existingDir) -and
+              (Get-ChildItem -LiteralPath $existingDir -Recurse -File -Force -ErrorAction SilentlyContinue)) {
+        # Files, not entries. Removing a VM leaves its Snapshots and Virtual Machines folders
+        # behind empty, and a directory holding nothing but those is not something to review:
+        # it is what a teardown looks like from the outside. Testing the directory's existence
+        # instead turned "rebuild with setup\New-Lab.ps1", which is what Remove-Lab.ps1 tells
+        # you to do next, into an error on the very next command.
+        $problems += "$existingDir already holds files, though no VM uses them. Review it before this writes a disk there."
     }
 }
 

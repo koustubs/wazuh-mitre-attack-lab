@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 #requires -RunAsAdministrator
 <#
     Takes the lab apart: the profile's virtual machines, and the network they sit on.
@@ -114,10 +114,17 @@ foreach ($info in $present) {
 
     if ($DeleteDisks) {
         # The VM's own directory under storageRoot, which the backend does not own and so does
-        # not remove. Only when it is empty: anything else in there was put there by hand.
+        # not remove. Only when it holds no files: anything else in there was put there by hand.
+        #
+        # Files rather than entries, because Hyper-V leaves an empty Snapshots and an empty
+        # Virtual Machines folder behind after the VM is gone. Testing for entries found those,
+        # concluded the directory was in use, and left a skeleton that New-Lab.ps1 then refused
+        # to build into, so the rebuild this script recommends on its last line failed on the
+        # very next command.
         $vmDir = Join-Path $root $info.Name
-        if ((Test-Path -LiteralPath $vmDir) -and -not (Get-ChildItem -LiteralPath $vmDir -Force)) {
-            Remove-Item -LiteralPath $vmDir -Force
+        if ((Test-Path -LiteralPath $vmDir) -and
+            -not (Get-ChildItem -LiteralPath $vmDir -Recurse -File -Force -ErrorAction SilentlyContinue)) {
+            Remove-Item -LiteralPath $vmDir -Recurse -Force
         }
     }
 }

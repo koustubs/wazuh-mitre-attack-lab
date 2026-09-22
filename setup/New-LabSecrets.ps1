@@ -41,13 +41,13 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-if (-not $SecretsPath) {
-    $here = $PSScriptRoot
-    if (-not $here) { $here = Split-Path -Parent $MyInvocation.MyCommand.Path }
-    if (-not $here) { throw 'Cannot resolve the script directory. Run this script by path.' }
-    . (Join-Path $here 'LabConfig.ps1')
-    $SecretsPath = Get-LabPath Secrets
-}
+$here = $PSScriptRoot
+if (-not $here) { $here = Split-Path -Parent $MyInvocation.MyCommand.Path }
+if (-not $here) { throw 'Cannot resolve the script directory. Run this script by path.' }
+# Loaded whether or not the default path is wanted, because the closing message reads the
+# profile to decide which step comes next.
+. (Join-Path $here 'LabConfig.ps1')
+if (-not $SecretsPath) { $SecretsPath = Get-LabPath Secrets }
 
 $CryptAlphabet = './0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 
@@ -218,4 +218,13 @@ Write-Host '  lab_ed25519 and lab_ed25519.pub'
 Write-Host '  console-password.txt and console-password.hash'
 Write-Host ''
 Write-Host 'These are the only copies. They are excluded from Git on purpose, so if you lose them'
-Write-Host 'the lab has to be rebuilt. Next: New-LabSeeds.ps1, then New-WindowsSeed.ps1.'
+# The Windows seed is a step only on a profile that builds a Windows endpoint. Telling a lean
+# user to run it sends them after an ISO their profile does not use and a VM it does not build.
+$needsWindowsSeed = @(Get-LabVms).Keys | Where-Object {
+    (Get-LabConfig).vms.$_.os -eq 'windows'
+}
+if ($needsWindowsSeed) {
+    Write-Host 'the lab has to be rebuilt. Next: New-LabSeeds.ps1, then New-WindowsSeed.ps1.'
+} else {
+    Write-Host 'the lab has to be rebuilt. Next: New-LabSeeds.ps1.'
+}
