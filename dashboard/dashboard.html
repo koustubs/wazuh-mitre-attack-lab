@@ -1175,7 +1175,7 @@ function render(data) {
       <div class="role">${esc(vm.role)} &middot; ${esc(vm.address)}</div>
       ${flag}
       <div class="stats">
-        <div><div class="k">CPU</div><div class="v">${running ? vm.cpuPercent + "%" : "&mdash;"}</div></div>
+        <div><div class="k">CPU</div><div class="v">${running && vm.cpuPercent >= 0 ? vm.cpuPercent + "%" : "&mdash;"}</div></div>
         <div><div class="k">Memory</div><div class="v">${running ? vm.memoryGb + " GB" : vm.configuredGb + " GB"}</div></div>
         <div><div class="k">Uptime</div><div class="v">${vm.uptime || "&mdash;"}</div></div>
       </div>

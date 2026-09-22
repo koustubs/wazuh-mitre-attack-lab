@@ -45,12 +45,16 @@ if (-not $script:IsElevated -and -not $NoElevate) {
     return
 }
 
-Import-Module Hyper-V -ErrorAction Stop
-
 # Names, addresses, roles and sizes all come from lab.config.json at the repository root. They
 # used to be written here and in seven other files, which had to agree and which nothing checked.
 # Changing the subnet meant finding all eight.
-. (Join-Path $PSScriptRoot '..\setup\LabConfig.ps1')
+#
+# The host checks and the hypervisor come from the same place setup\Test-LabHost.ps1 uses, so the
+# two cannot disagree about whether this machine is ready. This file used to open with
+# "Import-Module Hyper-V -ErrorAction Stop", which meant the dashboard would not start at all on
+# a host without Hyper-V, before it could say why. Loading the backend is a call now, and a
+# failure to load it is a check that fails rather than a stack trace.
+. (Join-Path $PSScriptRoot '..\setup\LabPreflight.ps1')
 
 $LabConfig  = Get-LabConfig
 $LabProfile = $LabConfig.profile
@@ -60,6 +64,11 @@ $LabBudget  = Get-LabBudget
 # The VMs this profile builds, manager first. The lean profile has no Windows endpoint, and its
 # absence is correct rather than a VM that has gone missing.
 $LabVms = Get-LabVms
+
+# Reported by the preflight rather than thrown, so a host with no usable hypervisor still gets a
+# page that explains itself.
+$LabBackendReady = $false
+try { Import-LabBackend | Out-Null; $LabBackendReady = $true } catch { }
 
 # Service health and recent alerts come over SSH using the lab key. Note what is NOT here: the
 # Windows endpoint is never contacted. Its agent's connection state is reported by the manager,
@@ -501,31 +510,8 @@ try {
 # Total physical memory never changes while the machine is up, so read it once.
 $script:TotalMemoryGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
 
-function Test-TcpPort {
-    <#
-    Non-blocking connect with a timeout it actually honours.
-
-    The obvious version, BeginConnect followed by WaitOne, does not work. When the host is
-    unreachable the wait expires on schedule but EndConnect and Close then block until the
-    operating system has finished its SYN retries. Measured against a powered-off lab VM, that
-    turned a 400 ms timeout into a 21 second stall, which is fatal inside a polling loop. A
-    non-blocking socket polled for writability respects the timeout to the millisecond.
-    #>
-    param([string]$Address, [int]$Port, [int]$TimeoutMs = 400)
-    $socket = New-Object System.Net.Sockets.Socket('InterNetwork', 'Stream', 'Tcp')
-    try {
-        $socket.Blocking = $false
-        # A non-blocking connect always reports "would block" immediately; that is expected.
-        try { $socket.Connect($Address, $Port) } catch [System.Net.Sockets.SocketException] { }
-        $writable = $socket.Poll($TimeoutMs * 1000, [System.Net.Sockets.SelectMode]::SelectWrite)
-        $failed = $socket.Poll(0, [System.Net.Sockets.SelectMode]::SelectError)
-        return ($writable -and -not $failed)
-    } catch {
-        return $false
-    } finally {
-        $socket.Close()
-    }
-}
+# Test-TcpPort is in setup\LabPreflight.ps1, which this file dot-sources. The health polling
+# here and the package-source check there want the same non-blocking connect.
 
 function Invoke-LabSsh {
     <#
@@ -684,7 +670,7 @@ function Invoke-LabScenario {
     if ($Scenario -notin @('S1', 'S2', 'S3')) { throw "Unknown scenario: $Scenario" }
     if ($Mode -notin @('test', 'comparison')) { throw "Unknown mode: $Mode" }
     if ($VmName -notin @('WAZUH-LINUX', 'WAZUH-WIN')) { throw "Scenarios run on the endpoints, not on $VmName." }
-    $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
+    $vm = Get-LabVmInfo -Name $VmName
     if (-not $vm -or $vm.State -ne 'Running') { throw "$VmName is not running." }
 
     $label = 'Scenario {0} {1} on {2}' -f $Scenario, $Mode, $VmName
@@ -803,273 +789,10 @@ function Get-JobNotices {
 # Checking before the page opens means it can name the cause rather than the symptom. Nothing
 # here writes, starts or changes anything: it is all reads.
 
-# Firmware virtualization and SLAT cannot change without a reboot, and Win32_Processor is one of
-# the slower queries in this file, so the CPU facts are read once per run.
-$script:CpuFacts = $null
-
-function Get-CpuFacts {
-    if ($script:CpuFacts) { return $script:CpuFacts }
-    $facts = [ordered]@{ vendor = ''; name = ''; firmware = $null; slat = $null; hypervisor = $null }
-    try {
-        $facts.hypervisor = [bool](Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).HypervisorPresent
-    } catch { }
-    try {
-        $cpu = @(Get-CimInstance Win32_Processor -ErrorAction Stop)[0]
-        $facts.name     = ([string]$cpu.Name).Trim()
-        $facts.vendor   = ([string]$cpu.Manufacturer).Trim()
-        $facts.firmware = $cpu.VirtualizationFirmwareEnabled
-        $facts.slat     = $cpu.SecondLevelAddressTranslationExtensions
-    } catch { }
-    $script:CpuFacts = $facts
-    return $facts
-}
-
-function New-LabCheck {
-    param(
-        [string]$Id,
-        [string]$Label,
-        [ValidateSet('pass', 'warn', 'fail', 'unknown')][string]$State,
-        [string]$Detail,
-        # Always supplied, shown only when the check is not passing. Keeping the instruction
-        # attached to the check rather than in the page means it cannot drift from the test.
-        [string]$Fix = ''
-    )
-    [ordered]@{ id = $Id; label = $Label; state = $State; detail = $Detail; fix = $Fix }
-}
-
-function Get-LabPreflight {
-    $checks = @()
-    $cpu = Get-CpuFacts
-
-    # Call the setting what the firmware calls it. "Enable virtualization" is not the label in
-    # either vendor's UEFI, and hunting for a menu entry that does not exist is a poor first
-    # experience of somebody else's project.
-    $virt = 'hardware virtualization'
-    if ($cpu.vendor -match 'AMD') { $virt = 'SVM' } elseif ($cpu.vendor -match 'Intel') { $virt = 'VT-x' }
-
-    # 1. Elevation. Checked first because most of what follows cannot be read without it, and a
-    #    list full of "unknown" is a worse answer than one line saying why.
-    $checks += New-LabCheck -Id 'admin' -Label 'Administrator rights' `
-        -State $(if ($script:IsElevated) { 'pass' } else { 'fail' }) `
-        -Detail $(if ($script:IsElevated) { 'This session is elevated.' }
-                  else { 'Hyper-V does not answer an ordinary session, so nothing below can be read.' }) `
-        -Fix 'Close this window, run Lab.cmd again, and accept the prompt.'
-
-    # 2. Hardware virtualization. HypervisorPresent is tested first, and the order matters: once
-    #    Hyper-V is running it owns the virtualization extensions and Win32_Processor reports
-    #    VirtualizationFirmwareEnabled as false, because the host OS can no longer see the
-    #    firmware setting it is already using. Reading that field alone therefore reports
-    #    "disabled" on a machine whose VMs are running, which is a confusing thing to be told.
-    if ($cpu.hypervisor) {
-        $checks += New-LabCheck -Id 'virt' -Label ('Hardware virtualization, {0}' -f $virt) -State 'pass' `
-            -Detail ('{0} is on and a hypervisor is running.' -f $virt)
-    } elseif ($cpu.firmware -eq $false) {
-        $slatNote = ''
-        if ($cpu.slat -eq $false) {
-            $slatNote = ' Second Level Address Translation also reads as unavailable, which Hyper-V requires.'
-        }
-        $checks += New-LabCheck -Id 'virt' -Label ('Hardware virtualization, {0}' -f $virt) -State 'fail' `
-            -Detail (('{0} is switched off in firmware. No virtual machine on this host can start.' -f $virt) + $slatNote) `
-            -Fix ('Reboot into UEFI setup, enable {0}, and boot back into Windows. On AMD it is usually under CPU Configuration, on Intel under Advanced.' -f $virt)
-    } elseif ($cpu.firmware -eq $true) {
-        $checks += New-LabCheck -Id 'virt' -Label ('Hardware virtualization, {0}' -f $virt) -State 'warn' `
-            -Detail ('{0} is enabled in firmware, but no hypervisor is running on this host.' -f $virt) `
-            -Fix 'Enable the Hyper-V platform below. It needs a reboot before the hypervisor loads.'
-    } else {
-        $checks += New-LabCheck -Id 'virt' -Label ('Hardware virtualization, {0}' -f $virt) -State 'unknown' `
-            -Detail 'Windows did not report the processor virtualization state.' `
-            -Fix 'Confirm it by hand in Task Manager, Performance, CPU. It reads "Virtualization: Enabled".'
-    }
-
-    # 3. The Hyper-V platform itself. The service is the honest test: the optional feature can be
-    #    installed and still not running, and a running vmms proves SLAT and the rest are met.
-    $vmms = $null
-    try { $vmms = Get-Service -Name 'vmms' -ErrorAction Stop } catch { }
-    if (-not $vmms) {
-        $checks += New-LabCheck -Id 'hyperv' -Label 'Hyper-V platform' -State 'fail' `
-            -Detail 'The Hyper-V Virtual Machine Management service is not installed on this host.' `
-            -Fix 'Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All, from an elevated prompt, then reboot.'
-    } elseif ($vmms.Status -ne 'Running') {
-        $checks += New-LabCheck -Id 'hyperv' -Label 'Hyper-V platform' -State 'fail' `
-            -Detail ('The Hyper-V management service is installed but {0}.' -f $vmms.Status.ToString().ToLower()) `
-            -Fix 'Start-Service vmms. If it refuses, reboot: the hypervisor loads at boot, not on demand.'
-    } else {
-        $checks += New-LabCheck -Id 'hyperv' -Label 'Hyper-V platform' -State 'pass' `
-            -Detail 'The Hyper-V management service is running.'
-    }
-
-    # Everything past here needs Hyper-V to answer, so the VMs are read once and reused rather
-    # than paying for Get-VM in four separate checks.
-    $vmLookup = @{}
-    $vmReadable = $false
-    if ($script:IsElevated -and $vmms -and $vmms.Status -eq 'Running') {
-        $vmReadable = $true
-        foreach ($name in $LabVms.Keys) {
-            try { $vmLookup[$name] = Get-VM -Name $name -ErrorAction Stop } catch { $vmLookup[$name] = $null }
-        }
-    }
-
-    # 4. The lab network. The switch and the NAT are one row because they are one job: without
-    #    both, the guests have addresses that reach nothing.
-    if (-not $vmReadable) {
-        $checks += New-LabCheck -Id 'network' -Label 'Lab network' -State 'unknown' `
-            -Detail 'Not read, because Hyper-V is not answering yet.' `
-            -Fix 'Clear the checks above first.'
-    } else {
-        # The gateway with its last octet stripped, so the NAT lookup follows whatever
-        # lab.config.json says rather than a second literal written here.
-        $netPrefix = ($LabNetwork.gateway -replace '\.\d+$', '.')
-        $sw = Get-VMSwitch -Name $LabNetwork.name -ErrorAction SilentlyContinue
-        $nat = @(Get-NetNat -ErrorAction SilentlyContinue |
-            Where-Object { $_.InternalIPInterfaceAddressPrefix -like ($netPrefix + '*') })
-        if (-not $sw) {
-            $checks += New-LabCheck -Id 'network' -Label 'Lab network' -State 'fail' `
-                -Detail ('The internal switch {0} does not exist, so the VMs have nothing to attach to.' -f $LabNetwork.name) `
-                -Fix 'The switch and the NAT are both created by setup\New-Lab.ps1. See docs/setup.md.'
-        } elseif ($nat.Count -eq 0) {
-            $checks += New-LabCheck -Id 'network' -Label 'Lab network' -State 'warn' `
-                -Detail ('The {0} switch exists, but no NAT covers {1}. The guests reach this host and each other, but not the internet.' -f $LabNetwork.name, $LabNetwork.subnet) `
-                -Fix ('New-NetNat -Name {0} -InternalIPInterfaceAddressPrefix {1}' -f $LabNetwork.name, $LabNetwork.subnet)
-        } else {
-            $checks += New-LabCheck -Id 'network' -Label 'Lab network' -State 'pass' `
-                -Detail ('Internal switch {0}, with NAT on {1}.' -f $LabNetwork.name, $LabNetwork.subnet)
-        }
-    }
-
-    # 5. The VMs themselves.
-    if (-not $vmReadable) {
-        $checks += New-LabCheck -Id 'vms' -Label 'Lab virtual machines' -State 'unknown' `
-            -Detail 'Not read, because Hyper-V is not answering yet.' `
-            -Fix 'Clear the checks above first.'
-    } else {
-        # Measured against the profile, not against three. The lean profile builds two VMs
-        # and a Windows endpoint that is absent by design is not a fault.
-        $absentVms = @($LabVms.Keys | Where-Object { -not $vmLookup[$_] })
-        if ($absentVms.Count -eq $LabVms.Count) {
-            $checks += New-LabCheck -Id 'vms' -Label 'Lab virtual machines' -State 'fail' `
-                -Detail ('None of the {0} VMs in the {1} profile exist on this host. The lab has not been built here.' -f $LabVms.Count, $LabProfile) `
-                -Fix 'Follow docs/setup.md from the start. It builds them.'
-        } elseif ($absentVms.Count -gt 0) {
-            $checks += New-LabCheck -Id 'vms' -Label 'Lab virtual machines' -State 'fail' `
-                -Detail ('Missing: {0}. These names have to match lab.config.json exactly.' -f ($absentVms -join ', ')) `
-                -Fix 'Either create the missing VMs, or correct the names in lab.config.json.'
-        } else {
-            $running = @($LabVms.Keys | Where-Object { $vmLookup[$_].State.ToString() -eq 'Running' }).Count
-            $checks += New-LabCheck -Id 'vms' -Label 'Lab virtual machines' -State 'pass' `
-                -Detail ('All {0} present, {1} profile. {2} running.' -f $LabVms.Count, $LabProfile, $running)
-        }
-    }
-
-    # 6. The credentials. This is the check that catches a fresh clone: .lab-secrets is correctly
-    #    gitignored, so a clone has none of it, and without the key every SSH read fails.
-    $secretsDir = Get-LabPath Secrets
-    $needed = @('lab_ed25519', 'lab_ed25519.pub', 'console-password.txt', 'console-password.hash')
-    $absent = @($needed | Where-Object { -not (Test-Path -LiteralPath (Join-Path $secretsDir $_)) })
-    if ($absent.Count -eq 0) {
-        $checks += New-LabCheck -Id 'secrets' -Label 'Lab credentials' -State 'pass' `
-            -Detail 'The SSH key and console password are present in .lab-secrets.'
-    } else {
-        $checks += New-LabCheck -Id 'secrets' -Label 'Lab credentials' -State 'fail' `
-            -Detail ('Missing from .lab-secrets: {0}. Without the key, nothing inside the guests can be read.' -f ($absent -join ', ')) `
-            -Fix 'Run setup\New-LabSecrets.ps1. On a fresh clone that is the first step. If the VMs already exist and the key was deleted, a new key will not match them.'
-    }
-
-    # 7. The SSH client. Present on Windows 11 by default, but it is an optional feature and can
-    #    be absent, in which case every guest reading in this dashboard fails for one reason.
-    $ssh = Get-Command 'ssh.exe' -ErrorAction SilentlyContinue
-    if ($ssh) {
-        $checks += New-LabCheck -Id 'ssh' -Label 'OpenSSH client' -State 'pass' -Detail $ssh.Source
-    } else {
-        $checks += New-LabCheck -Id 'ssh' -Label 'OpenSSH client' -State 'fail' `
-            -Detail 'ssh.exe was not found on PATH. Service health, alerts and the Linux scenarios all travel over SSH.' `
-            -Fix 'Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0'
-    }
-
-    # 8. Memory. Advisory rather than blocking: the manager alone runs in 8 GB and is enough to
-    #    look at the lab. What is counted is headroom, free plus whatever the lab already holds,
-    #    so a lab that is up does not report itself short of the memory it is currently using.
-    $freeGb = $null
-    if ($script:MemCounter) { try { $freeGb = [math]::Round($script:MemCounter.NextValue() / 1024, 1) } catch { } }
-    $labHoldingGb = 0
-    if ($vmReadable) {
-        foreach ($name in $LabVms.Keys) {
-            $vm = $vmLookup[$name]
-            if ($vm -and $vm.State.ToString() -eq 'Running') { $labHoldingGb += $vm.MemoryAssigned / 1GB }
-        }
-    }
-    # Summed from lab.config.json by Get-LabBudget, so it cannot drift from what New-Lab.ps1
-    # actually allocates. It used to be the literal 16, written here and twice more in prose.
-    $labNeedsGb = $LabBudget.MemoryGb
-    if ($null -eq $freeGb) {
-        $checks += New-LabCheck -Id 'memory' -Label 'Memory headroom' -State 'unknown' `
-            -Detail 'The available memory counter did not answer.'
-    } else {
-        $headroomGb = [math]::Round($freeGb + $labHoldingGb, 1)
-        if ($headroomGb -ge $labNeedsGb) {
-            $checks += New-LabCheck -Id 'memory' -Label 'Memory headroom' -State 'pass' `
-                -Detail ('{0} GB available for a lab that needs {1} GB.' -f $headroomGb, $labNeedsGb)
-        } else {
-            $checks += New-LabCheck -Id 'memory' -Label 'Memory headroom' -State 'warn' `
-                -Detail ('{0} GB available, and the {1} profile starts {2} VMs needing {3} GB. The last one to start would fail.' -f $headroomGb, $LabProfile, $LabVms.Count, $labNeedsGb) `
-                -Fix 'Close something, run the manager on its own, or switch to the lean profile in lab.config.json.'
-        }
-    }
-
-    # 9. Disk, on whichever drive the VMs actually live on rather than an assumed one.
-    $vmDrive = $null
-    if ($vmReadable -and $vmLookup['WAZUH-MANAGER']) {
-        try { $vmDrive = [IO.Path]::GetPathRoot($vmLookup['WAZUH-MANAGER'].Path).TrimEnd('\') } catch { }
-    }
-    if (-not $vmDrive) {
-        $checks += New-LabCheck -Id 'disk' -Label 'Disk headroom' -State 'unknown' `
-            -Detail 'Not read: the manager VM has to exist before its storage drive is known.'
-    } else {
-        $vol = Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='{0}'" -f $vmDrive) -ErrorAction SilentlyContinue
-        $vmFreeGb = $(if ($vol) { [math]::Round($vol.FreeSpace / 1GB, 1) } else { $null })
-        if ($null -eq $vmFreeGb) {
-            $checks += New-LabCheck -Id 'disk' -Label 'Disk headroom' -State 'unknown' `
-                -Detail ('Drive {0} did not report free space.' -f $vmDrive)
-        } elseif ($vmFreeGb -ge $LabBudget.DiskWithHeadroomGb / 4) {
-            $checks += New-LabCheck -Id 'disk' -Label 'Disk headroom' -State 'pass' `
-                -Detail ('{0} GB free on {1}, where the VMs live.' -f $vmFreeGb, $vmDrive)
-        } else {
-            $checks += New-LabCheck -Id 'disk' -Label 'Disk headroom' -State 'warn' `
-                -Detail ('Only {0} GB free on {1}. The disks are dynamic and the indexer grows.' -f $vmFreeGb, $vmDrive) `
-                -Fix 'A full disk stops the indexer first, which looks like a detection failure rather than a disk problem.'
-        }
-    }
-
-    # 10. Autostart. Advisory, and fixable from the page. It is checked because it was a stated
-    #     requirement of this lab: 16 GB should never come up on its own when the host boots.
-    if (-not $vmReadable) {
-        $checks += New-LabCheck -Id 'autostart' -Label 'Autostart locked off' -State 'unknown' `
-            -Detail 'Not read, because Hyper-V is not answering yet.'
-    } else {
-        $waking = @($LabVms.Keys | Where-Object {
-            $vmLookup[$_] -and $vmLookup[$_].AutomaticStartAction.ToString() -ne 'Nothing'
-        })
-        if ($waking.Count -eq 0) {
-            $checks += New-LabCheck -Id 'autostart' -Label 'Autostart locked off' -State 'pass' `
-                -Detail 'No lab VM starts with the host.'
-        } else {
-            $checks += New-LabCheck -Id 'autostart' -Label 'Autostart locked off' -State 'warn' `
-                -Detail ('Set to start with the host: {0}. That is {1} GB waking up without being asked.' -f ($waking -join ', '), $LabBudget.MemoryGb) `
-                -Fix 'Use "Lock: never autostart" under Advanced once the dashboard is open.'
-        }
-    }
-
-    $failed = @($checks | Where-Object { $_.state -eq 'fail' })
-    $warned = @($checks | Where-Object { $_.state -eq 'warn' })
-    [ordered]@{
-        ok      = $true
-        ready   = ($failed.Count -eq 0)
-        failed  = $failed.Count
-        warned  = $warned.Count
-        checks  = @($checks)
-        machine = $env:COMPUTERNAME
-        cpu     = $cpu.name
-    }
-}
+# The preflight, the check constructor and the CPU facts all live in setup\LabPreflight.ps1,
+# dot-sourced at the top of this file. They were written here first, which is why they read as
+# they do; they moved because every one of these checks is something you want answered before
+# cloning the repository, not after building three VMs.
 
 # ---------------------------------------------------------------------------------------------
 # Credentials
@@ -1414,7 +1137,7 @@ function Get-LabState {
         $vm = $null
         $denied = $false
         try {
-            $vm = Get-VM -Name $name -ErrorAction Stop
+            $vm = Get-LabVmInfo -Name $name
         } catch {
             if (-not $script:IsElevated) { $denied = $true }
         }
@@ -1425,8 +1148,8 @@ function Get-LabState {
             }
             continue
         }
-        $state = $vm.State.ToString()
-        if ($state -eq 'Running') { $runningMemoryBytes += $vm.MemoryAssigned }
+        $state = $vm.State
+        if ($state -eq 'Running') { $runningMemoryBytes += $vm.MemoryBytes }
 
         # There is nothing to learn from probing a VM that is not running, and a connect to a
         # powered-off address is the most expensive thing this loop can do. Skip it.
@@ -1449,13 +1172,15 @@ function Get-LabState {
             found       = $true
             state       = $state
             status      = $vm.Status
-            cpuPercent  = [int]$vm.CPUUsage
-            memoryGb    = [math]::Round($vm.MemoryAssigned / 1GB, 1)
-            configuredGb = [math]::Round($vm.MemoryStartup / 1GB, 1)
-            cpuCount    = [int]$vm.ProcessorCount
+            # -1 means the backend cannot measure it, which is not the same as idle. VirtualBox
+            # reports CPU load only through a metrics collector that has to be armed per VM.
+            cpuPercent  = $vm.CpuPercent
+            memoryGb    = [math]::Round($vm.MemoryBytes / 1GB, 1)
+            configuredGb = [math]::Round($vm.ConfiguredMb / 1024, 1)
+            cpuCount    = $vm.CpuCount
             uptime      = Format-Uptime $vm.Uptime
-            autostart   = $vm.AutomaticStartAction.ToString()
-            autostartOk = ($vm.AutomaticStartAction.ToString() -eq 'Nothing')
+            autostart   = $vm.Autostart
+            autostartOk = ($vm.Autostart -eq 'Nothing')
             probes      = @($script:ProbeCache[$name])
         }
     }
@@ -1512,17 +1237,12 @@ function Get-LabState {
 function Invoke-VmAction {
     param([string]$VmName, [string]$Action)
     if (-not $LabVms.Contains($VmName)) { throw "Unknown VM: $VmName" }
-    $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
+    if ($Action -notin @('start', 'shutdown', 'restart', 'forceoff')) { throw "Unknown action: $Action" }
+    $vm = Get-LabVmInfo -Name $VmName
     if (-not $vm) { throw "VM not found: $VmName" }
     $label = '{0} {1}' -f $Action, $VmName
     $script:HasJobs = $true
-    switch ($Action) {
-        'start'    { Start-VM   -Name $VmName -AsJob | ForEach-Object { $_.Name = $label } }
-        'shutdown' { Stop-VM    -Name $VmName -Force -AsJob | ForEach-Object { $_.Name = $label } }
-        'restart'  { Restart-VM -Name $VmName -Force -AsJob | ForEach-Object { $_.Name = $label } }
-        'forceoff' { Stop-VM    -Name $VmName -TurnOff -Force -AsJob | ForEach-Object { $_.Name = $label } }
-        default    { throw "Unknown action: $Action" }
-    }
+    Invoke-LabVmAction -Name $VmName -Action $Action | ForEach-Object { $_.Name = $label }
     return "Requested $Action on $VmName."
 }
 
@@ -1530,10 +1250,10 @@ function Lock-NoAutostart {
     <# The only autostart value this tool can write. There is deliberately no enable path. #>
     $changed = @()
     foreach ($name in $LabVms.Keys) {
-        $vm = Get-VM -Name $name -ErrorAction SilentlyContinue
+        $vm = Get-LabVmInfo -Name $name
         if (-not $vm) { continue }
-        if ($vm.AutomaticStartAction.ToString() -ne 'Nothing') {
-            Set-VM -Name $name -AutomaticStartAction Nothing
+        if ($vm.Autostart -ne 'Nothing') {
+            Set-LabVmNoAutostart -Name $name
             $changed += $name
         }
     }
@@ -1800,11 +1520,11 @@ while ($running -and $listener.IsListening) {
                 $reader = New-Object IO.StreamReader($request.InputStream, $request.ContentEncoding)
                 $payload = $reader.ReadToEnd() | ConvertFrom-Json
                 $reader.Close()
-                # Three Get-VM calls, only on the button press, so the first phase acts on the
+                # One read per VM, only on the button press, so the first phase acts on the
                 # states as they are right now rather than whatever the last poll cached.
                 $vmStates = @($LabVms.Keys | ForEach-Object {
-                    $vm = Get-VM -Name $_ -ErrorAction SilentlyContinue
-                    [ordered]@{ name = $_; state = $(if ($vm) { $vm.State.ToString() } else { 'Not found' }) }
+                    $vm = Get-LabVmInfo -Name $_
+                    [ordered]@{ name = $_; state = $(if ($vm) { $vm.State } else { 'Not found' }) }
                 })
                 $message = Start-LabSequence -Action $payload.action -Vms $vmStates
                 Write-Reply -Response $response -Body (([ordered]@{ ok = $true; message = $message }) | ConvertTo-Json -Compress)
