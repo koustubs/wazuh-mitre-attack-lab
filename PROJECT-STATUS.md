@@ -303,11 +303,12 @@ wazuh-threat-detection/
     LabPreflight.ps1            the host checks, shared by Test-LabHost and the dashboard
     LabIso.ps1                  ISO authoring over IMAPI2FS
     backends/
-      hyperv.psm1               one contract, twelve functions
-      virtualbox.psm1           the same twelve, against VBoxManage
+      hyperv.psm1               one contract, sixteen functions
+      virtualbox.psm1           the same sixteen, against VBoxManage, never yet run
     .lab-secrets/               gitignored: keys, password, seed images
   manager/
     install-manager.sh          manager, indexer and dashboard pinned, and the firewall
+    configure-firewall.sh       22 and 443 to the host, 1514 per endpoint, re-runnable
     tune-manager.sh             heap, disabled modules and index retention for the profile
     configure-manager.sh        lab rules and agent identities
     configure-dashboard.sh      index pattern the UI needs in order to render anything

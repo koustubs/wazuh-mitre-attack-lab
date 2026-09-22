@@ -164,7 +164,8 @@ flowchart LR
     CREATE["New-Lab.ps1<br/>Network, VMs, boot disk and seed attached"]
     FIRST["First boot<br/>cloud-init applies account, key, hostname and address"]
     OS["Running guests, labadmin<br/>/etc/wazuh-lab/lab.env in place"]
-    MI["install-manager.sh<br/>Version gate, firewall, all-in-one install"]
+    MI["install-manager.sh<br/>Version gate, all-in-one install"]
+    FW["configure-firewall.sh<br/>22 and 443 to the host, 1514 per endpoint in the profile"]
     TUNE["tune-manager.sh<br/>Indexer heap, disabled modules, index retention"]
     MC["configure-manager.sh<br/>Deploy rules and validate analysisd"]
     KEYS[("Manager client.keys<br/>Per-endpoint key exports")]
@@ -687,7 +688,7 @@ The report builder uses saved measurement artefacts and a generated `figures.jso
 | `lab.config.json` | Backend, profile, addresses, sizes and versions: the one place they are written down. | Versioned source. |
 | `docs/design/` | The coursework the build started from: context, scenarios, acceptance requirements and the proposed stack, with the PlantUML context diagram. | Historical design, written before the build. |
 | `setup/` | Host preflight, secrets and seed builders, image fetch, provisioning, agent enrolment and teardown. | Versioned tooling. |
-| `setup/backends/` | One twelve-function contract, implemented for Hyper-V and for VirtualBox. | Versioned tooling. |
+| `setup/backends/` | One sixteen-function contract, implemented for Hyper-V and for VirtualBox. Only the Hyper-V side has ever run. | Versioned tooling. |
 | `dashboard/` | PowerShell server, HTML UI, launcher and guest-permission setup. | Versioned application. |
 | `.lab-secrets/` | SSH keys, console credentials and installation seeds. | Local only; excluded from Git. |
 | `manager/` | Pinned installation, rule deployment, native dashboard setup and custom rules. | Versioned configuration. |

@@ -6,9 +6,9 @@ frequency rule edge cases are characterised. R1 to R5 are met.
 
 ## Results
 
-One Wazuh 4.14.7 manager and two enrolled agents, measured on Hyper-V. VirtualBox is a supported
-backend and none of these results have been re-measured on it. Every alert below came from a real
-endpoint action, not a synthetic event.
+One Wazuh 4.14.7 manager and two enrolled agents, measured on Hyper-V. The VirtualBox backend is
+written and has never built a lab, so none of these results have been measured on it. Every alert
+below came from a real endpoint action, not a synthetic event.
 
 | Case | Rule | Level | ATT&CK | Result |
 | --- | --- | --- | --- | --- |

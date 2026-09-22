@@ -31,6 +31,13 @@ different project. The guests are Ubuntu and Windows.
 Hyper-V needs Windows Pro, Enterprise or Education. VirtualBox runs on Home as well, and on a
 machine that already has it. Nothing here installs a hypervisor for you.
 
+**The VirtualBox backend is written and has never built a lab.** Everything measured in this
+repository was measured on Hyper-V. Both backends are held to the same sixteen function contract
+and that contract is checked: the two modules define the same functions with the same parameter
+names and the same mandatory arguments, return the same fields, and `virtualbox.psm1` imports
+cleanly on a host with no VirtualBox installed. None of that exercises `VBoxManage`. Hyper-V is
+the tested path and VirtualBox is the one to expect to have to fix.
+
 `setup\Test-LabHost.ps1` answers all of this about your own machine before you build anything.
 It changes nothing, names the virtualization setting the way your CPU vendor names it, and
 prints the one command that fixes each failure.
