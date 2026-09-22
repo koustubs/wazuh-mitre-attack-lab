@@ -44,6 +44,16 @@ if (-not $Backend) { $Backend = $config.backend }
 if (-not $vms.Contains('WAZUH-WIN')) {
     throw "The $($config.profile) profile has no Windows endpoint, so there is nothing to seed. Use -Profile full."
 }
+# An ISO that needs -ImageName is a multi-edition one, and a multi-edition retail ISO also
+# stops Setup on the product key page unless the answer file carries a key. That failure
+# looks like nothing at all: the guest boots, writes not one byte to its disk, and sits
+# there. Worth a warning rather than an hour of wondering why the disk is still empty.
+if ($ImageName -and -not $ProductKey) {
+    Write-Warning ('No -ProductKey given. If this is a retail multi-edition ISO, Setup will ' +
+        'stop on the product key page and wait. The generic Pro Setup key is ' +
+        'W269N-WFGWX-YVC9B-4J6C9-T83GX. An evaluation image needs no key and rejects one.')
+}
+
 $vm = $vms['WAZUH-WIN']
 $net = $config.network
 
