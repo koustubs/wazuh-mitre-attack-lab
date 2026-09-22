@@ -53,4 +53,17 @@ for package in wazuh-manager wazuh-indexer wazuh-dashboard; do
 done
 apt-mark hold wazuh-manager wazuh-indexer wazuh-dashboard >>"$log" 2>&1
 echo 'Wazuh installed. Credentials and installer logs are in /root/wazuh-lab-install.'
+
+# The installer accepts every default, which is not the right size for this guest and leaves
+# modules running that nothing here reads. Run the tuning if it was copied across; say so if it
+# was not, rather than leaving an untuned manager looking finished.
+tune="$(dirname "$(readlink -f "$0")")/tune-manager.sh"
+if [[ -r $tune ]]; then
+    echo 'Tuning for this profile:'
+    bash "$tune"
+else
+    echo 'tune-manager.sh is not beside this script, so the indexer heap, the disabled modules'
+    echo 'and the alert retention policy have not been applied. Copy it over and run it.'
+fi
+
 echo 'Run configure-manager.sh next.'
