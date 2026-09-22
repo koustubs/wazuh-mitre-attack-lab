@@ -107,10 +107,18 @@ and maps to T1110.001. Both are kept because they describe different behaviour.
 
 ## Building the lab
 
-`deployment-guide.md` has the build order, host names and static addresses. The lab is created
-by `setup/New-Lab.ps1`, then provisioned unattended by `setup/New-LabSeeds.ps1` for the two Ubuntu
-machines and `setup/New-WindowsSeed.ps1` for Windows. `setup/LabConsole.ps1` drives a VM console
-over WMI, which is only needed to add `autoinstall` to the Ubuntu boot line.
+`setup.md` has the build order, host names and static addresses. The lab is created by
+`setup/New-Lab.ps1`, on Hyper-V or VirtualBox, and every address and size it uses comes from
+`lab.config.json`.
+
+The Ubuntu guests boot the cloud image `setup/Get-LabImage.ps1` fetched and verified, and
+configure themselves on first boot from the cloud-init seed `setup/New-LabSeeds.ps1` built. The
+Windows endpoint is the one guest that still runs an installer, driven unattended by
+`setup/New-WindowsSeed.ps1`.
+
+That replaced an Ubuntu server ISO you had to source yourself and an `autoinstall` directive
+typed at the GRUB prompt through a framebuffer driver, which was about fifteen minutes of
+installer per guest and the single most fragile step in the build.
 
 ## Delivery through to the indexer
 

@@ -40,7 +40,7 @@ what most of this file covers.
 | 1. Context analysis | `docs/design/` | Complete. Includes a rendered PlantUML system context diagram. |
 | 2. Problem and scope | `docs/design/` | Complete. Defines S1 to S3 and acceptance criteria R1 to R5. |
 | 3. Technical design | `docs/design/` | Complete. Stack pinned to Wazuh 4.14.x with the 5.0 beta transition acknowledged. |
-| 4. Implementation | `04-implementation/` | Complete. See `docs/implementation.md` for full results. |
+| 4. Implementation | `setup/`, `manager/`, `agents/`, `dashboard/` | Complete. See `docs/implementation.md` for full results. |
 | 5. Detection modelling | `scoring/` | Beyond the brief. Measured and reported. See section 5b. |
 
 The PDF sent to the mentor is at `docs/Wazuh-Threat-Detection-Proposal.pdf` and covers steps 1
@@ -272,52 +272,45 @@ transfers with a checksum.
 ```
 wazuh-threat-detection/
   Lab.cmd                       front door: opens the dashboard
-  README.md                     project overview
+  lab.config.json               the one place addresses, sizes and versions are written down
+  README.md                     what this is, what it needs, and what it measured
   PROJECT-STATUS.md             this file
   SECURITY.md                   what is excluded, and the pre-publication checklist
-  docs/
-    fresh-clone.md              what a clone does not contain, and how to rebuild it
-    collecting-a-dataset.md     how to record a labelled campaign, and when it is worth it
-  docs/design/          step 1, with system context diagram
-  docs/design/         step 2, scenarios and acceptance criteria
-  docs/design/          step 3, stack and approach
-  04-implementation/
-    README.md                   step 4 results, the main technical record
-    deployment-guide.md         build order, hostnames, addresses
-    host/
-      New-LabSecrets.ps1        creates the SSH keypair and console password
-      New-Lab.ps1               creates switch, NAT and three VMs
-      New-LabSeeds.ps1          cloud-init seed ISOs for the Ubuntu machines
-      New-WindowsSeed.ps1       autounattend ISO for Windows
-      LabConsole.ps1            headless VM console over WMI
-      Get-LabHost.ps1           host capacity preflight
-      Sync-LabCampaign.ps1      pulls campaign records off the endpoint as they are written
-      .lab-secrets/             gitignored: keys, password, seed images
-      lab-dashboard/
-        Start-LabDashboard.ps1  the dashboard server, and the lab up and down sequences
-        dashboard.html          the page
-        Enable-LabDashboard.ps1 one-time grant so it can read alerts, agents and the indexer
-    manager/
-      install-manager.sh        manager, indexer and dashboard pinned to 4.14.7, and the firewall
-      configure-manager.sh      lab rules and agent identities
-      configure-dashboard.sh    index pattern the UI needs in order to render anything
-      lab_rules.xml             the six detection rules
-    linux/                      agent install, scenario driver, and run-campaign.sh
+  setup/
+    Test-LabHost.ps1            run first: what this machine can and cannot do, and the fix
+    New-LabSecrets.ps1          SSH keypair, console password and its crypt hash
+    Get-LabImage.ps1            fetches and verifies the Ubuntu cloud image
+    New-LabSeeds.ps1            cloud-init seeds for the Ubuntu guests
+    New-WindowsSeed.ps1         autounattend seed for the Windows endpoint
+    New-Lab.ps1                 the network and the profile's VMs, on either backend
+    Install-LabAgents.ps1       collects each agent key and enrols the endpoint
+    Remove-Lab.ps1              teardown; disks are kept unless asked for
+    Write-GuestConfig.ps1       lab.config.json as shell, for the guests that cannot read it
+    LabConfig.ps1               config reader, dot-sourced by the rest
+    LabBackend.ps1              picks a backend module and checks it can run here
+    LabPreflight.ps1            the host checks, shared by Test-LabHost and the dashboard
+    LabIso.ps1                  ISO authoring over IMAPI2FS
+    backends/
+      hyperv.psm1               one contract, twelve functions
+      virtualbox.psm1           the same twelve, against VBoxManage
+    .lab-secrets/               gitignored: keys, password, seed images
+  manager/
+    install-manager.sh          manager, indexer and dashboard pinned, and the firewall
+    tune-manager.sh             heap, disabled modules and index retention for the profile
+    configure-manager.sh        lab rules and agent identities
+    configure-dashboard.sh      index pattern the UI needs in order to render anything
+    lab_rules.xml               the six detection rules
+  agents/
+    linux/                      agent install, scenario driver, campaign driver
     windows/                    agent install and scenario driver
-    tests/
-      fetch-engine-package.sh   re-fetches the pinned manager package a clone does not have
-      test_rules.py             offline rule checks against a real engine
-      test_dashboard_scoring.py runs the dashboard's manager script on fabricated alerts,
-                                with no lab up, and checks the severity path end to end
-      s1-burst.sh               controlled failure bursts for frequency edge cases
-      query-frequency.sh        reads back which rule fired, on which agent
-    evidence/
-      validation-status.md      what is verified and what is not, committable
-      rule-checks.json          synthetic rule check output
-      live-runs/                live run records
-      campaigns/                gitignored: records pulled off the endpoint by Sync-LabCampaign
+  dashboard/
+    Start-LabDashboard.ps1      the server, the up and down sequences, the scoring poll
+    dashboard.html              the page
+    Enable-LabDashboard.ps1     one-time grant: alerts, agents, the indexer and the baseline
+    README.md                   what the page shows and what it needed permission for
   scoring/
-    README.md                   step 5, the measured answer on whether a model beats the rules
+    README.md                   the measured answer on whether a model beats the rules
+    requirements.txt            NumPy and PyTorch, pinned
     alert_stream.py             the episode contract and the vocabulary a dataset carries
     import-ait.py               the AIT alert data set into episodes
     make-synthetic.py           stand-in alert stream, the only source with the lab's own rules
@@ -325,32 +318,55 @@ wazuh-threat-detection/
     baseline.py                 one rule, the degenerate classifier, logistic regression
     train.py                    embedding, GRU and linear head, in PyTorch
     evaluate.py                 leave one network out, across all eight
+    evaluate_adaptive.py        the same eight folds against the per endpoint baseline layer
     export-model.py             fits the portable model, with its measurement inside the file
+    Sync-LabCampaign.ps1        pulls campaign records off the endpoint as they are written
     scorer/                     score.py and model.json, the part that leaves this machine
     report/                     builds docs/Detection-Modelling-Report.pdf from the artefacts
     data/, models/              gitignored: rebuilt by the scripts above
+  tests/
+    fetch-engine-package.sh     re-fetches the pinned manager package a clone does not have
+    prepare-engine-check.sh     stands the engine up offline for the rule suite
+    test_rules.py               offline rule checks against a real engine
+    test_dashboard_scoring.py   runs the dashboard's manager script on fabricated alerts,
+                                with no lab up, and checks the severity path end to end
+    test_adaptive_scoring.py    the baseline layer and the live baseline helper, offline
+    s1-burst.sh                 controlled failure bursts for frequency edge cases
+    query-frequency.sh          reads back which rule fired, on which agent
+  evidence/
+    validation-status.md        what is verified and what is not, committable
+    README.md                   what lives here and why most of it does not
+    live-runs/, campaigns/      gitignored: raw records from real runs
+  docs/
+    setup.md                    the build, step by step
+    fresh-clone.md              what a clone does not contain, and how to rebuild it
+    implementation.md           the main technical record
+    collecting-a-dataset.md     how to record a labelled campaign, and when it is worth it
+    design/                     the coursework the build started from, written before it
+    architecture/               eleven Mermaid views and one page that renders them
+    progress-update/            the update builder
+    *.pdf                       the three deliverables
 ```
 
 ---
 
 ## 8. Rebuilding from scratch
 
-1. Run `host/New-LabSecrets.ps1` to create the SSH keypair and console password. A clone has
-   none, and every step below depends on them.
-2. Run `host/New-Lab.ps1` from an elevated PowerShell with both installation ISOs.
-3. Run `host/New-LabSeeds.ps1` and `host/New-WindowsSeed.ps1` to build the unattended images.
-4. Attach the seeds as second DVD drives, then boot each machine.
-5. For the two Ubuntu machines only, add `autoinstall` to the GRUB kernel line. `LabConsole.ps1`
-   can do this without opening a console window. Everything after that is unattended.
-6. Once the Ubuntu machines power themselves off, eject the media, set the boot order to disk,
-   and start them.
-7. On the manager, run `manager/install-manager.sh`, then `manager/configure-manager.sh`, then
-   `manager/configure-dashboard.sh`. Do not skip the third: without it the dashboard renders
-   nothing, however well detection is working.
-8. Transfer each agent key and run the matching agent installer on each endpoint.
+1. `setup\Test-LabHost.ps1`. It changes nothing and names what is missing, including whether a
+   hypervisor is installed at all. Installing one is yours to do.
+2. `setup\New-LabSecrets.ps1`. A clone has no keys and every step below depends on them.
+3. `setup\Get-LabImage.ps1`. Fetches and verifies the Ubuntu cloud image, once.
+4. `setup\New-LabSeeds.ps1`, and `setup\New-WindowsSeed.ps1` on the full profile.
+5. `setup\New-Lab.ps1`, elevated. The Ubuntu guests configure themselves on first boot.
+6. Copy `manager/` to the manager and run `install-manager.sh`, `configure-manager.sh`, then
+   `configure-dashboard.sh`. Do not skip the third: without it the dashboard renders nothing,
+   however well detection is working.
+7. `setup\Install-LabAgents.ps1`. It collects each key and enrols each endpoint.
+8. `dashboard\Enable-LabDashboard.ps1`, once.
 9. Run the scenarios.
 
-`deployment-guide.md` has the detail. The full sequence is still not a single command.
+`docs/setup.md` has the detail. The full sequence is still not a single command, deliberately:
+each step is a script that does one job and reports what it did.
 
 ---
 

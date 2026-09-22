@@ -5,7 +5,7 @@ question the project exists to answer: are all six detections alive, and when di
 fire.
 
 Open it with `Lab.cmd` at the root of the repository. This is not how the lab gets built; follow
-`deployment-guide.md` for that, once.
+[`docs/setup.md`](../docs/setup.md) for that, once.
 
 ## Before it opens
 

@@ -1,21 +1,36 @@
-# Deployment guide
+# Building the lab
 
-Build order for the Hyper-V lab. `New-Lab.ps1` refers to this document.
+Eight steps, each one script that does one job and says what it did. Nothing here installs a
+hypervisor, and nothing runs until you run it.
 
-The scripts check the machine they are running on and stop if it is the wrong one. Those checks
-are strict, so the names and addresses below are requirements, not suggestions.
+Everything reads `lab.config.json` at the root of the repository. Addresses, VM names, memory
+and disk sizes, the Ubuntu image and the Wazuh version are all in that one file; change the
+subnet there and every script and both guest images follow. Nothing below needs editing to
+move the lab onto a different network.
 
-## Before starting
+## Choose a profile first
 
-- Windows 11 ISO and Ubuntu Server 24.04 ISO on disk.
-- An elevated PowerShell session. `New-Lab.ps1` declares `#requires -RunAsAdministrator` and
-  `Get-VMSwitch` fails without it.
-- Around 220 GB free on the target drive. Use D:, since C: is short on space.
+| | lean | full |
+| --- | --- | --- |
+| Host RAM | 8 GB | 16 GB |
+| Free disk | 60 GB | 160 GB |
+| Guests | manager, Linux endpoint | plus the Windows endpoint |
+| Detection cases | 3 of 6, Linux only | 6 of 6 |
+| Images you supply | none | a Windows 11 ISO |
+| Manager | 4 GB, 2 vCPU, 32 GB disk | 6 GB, 4 vCPU, 60 GB disk |
+| Linux endpoint | 1 GB, 1 vCPU, 16 GB disk | 1.5 GB, 2 vCPU, 20 GB disk |
+| Windows endpoint | absent | 4 GB, 2 vCPU, 64 GB disk |
+
+Memory is dynamic on Hyper-V, with the minimum and maximum above in `lab.config.json`, so an
+idle guest gives its unused pages back. VirtualBox has no equivalent and takes what it is
+given.
+
+The shipped profile is `full`. Set `"profile": "lean"` in `lab.config.json`, or pass
+`-Profile lean` to any of the scripts below.
 
 ## Names and addresses
 
-The switch is Internal with NAT and has no DHCP server, so every guest needs a static address.
-Getting these wrong is the most likely reason a script refuses to run.
+The network has no DHCP, so every guest has a static address written into its seed.
 
 | Machine | VM name | Host name inside the guest | Address |
 | --- | --- | --- | --- |
@@ -24,38 +39,109 @@ Getting these wrong is the most likely reason a script refuses to run.
 | Windows endpoint | WAZUH-WIN | `WAZUH-WIN` | 172.29.70.20 |
 | Linux endpoint | WAZUH-LINUX | `wazuh-linux` | 172.29.70.30 |
 
-Gateway 172.29.70.1, prefix /24. The endpoint addresses are fixed by the firewall rules in
-`install-manager.sh`, which only opens port 1514 to .20 and .30.
+`install-manager.sh` opens port 1514 only to .20 and .30, so these are requirements rather
+than suggestions. They come from `lab.config.json`, which is also where to change them.
 
-The guest host name is set during operating system installation and is not the same as the
-Hyper-V VM name. Setting only the VM name is the easy mistake here.
+---
 
-## Steps
+## 0. Check the machine
 
-**0. Create the lab credentials.** Nothing else works without them, and a fresh clone has none.
+```
+.\setup\Test-LabHost.ps1
+```
+
+Changes nothing. It reports virtualization in firmware, naming the setting as your CPU vendor
+names it, which hypervisors are usable here, whether Hyper-V and VirtualBox are in conflict,
+RAM and disk against the profile, and whether the host can reach the internet. Each failure
+prints the one command that fixes it. `-Profile lean` asks whether the smaller profile would
+fit instead; `-Json` gives the same answers to a script.
+
+Exit code 0 means nothing failed. Warnings do not fail it.
+
+If it reports a missing hypervisor, that is yours to install. It prints the
+`Enable-WindowsOptionalFeature` line for Hyper-V, or where to get VirtualBox. Enabling Hyper-V
+is a reboot and a decision about your own machine.
+
+## 1. Create the lab credentials
 
 ```
 .\setup\New-LabSecrets.ps1
 ```
 
-This writes the SSH keypair, the console password and its SHA-512 crypt hash into
-`.lab-secrets\`, which is gitignored. Both seed builders in the next step read those files
-and fail immediately if they are missing. It refuses to overwrite an existing set without
-`-Force`, because replacing the key locks you out of any VM already built with it.
+Writes an SSH keypair, a 20 character console password and its SHA-512 crypt hash into
+`.lab-secrets\`, which is gitignored and has never been committed. Everything downstream reads
+those and fails immediately if they are missing.
 
-**1. Create the VMs.** From an elevated prompt:
+It will not overwrite an existing set without `-Force`, because replacing the keypair locks you
+out of every VM already built against the old one.
+
+## 2. Fetch the Ubuntu image
 
 ```
-.\setup\New-Lab.ps1 -UbuntuIso <path> -WindowsIso <path> -StorageRoot D:\Wazuh-Lab
+.\setup\Get-LabImage.ps1
 ```
 
-This creates the switch, the NAT, and three Generation 2 VMs. The Windows VM gets a key
-protector, TPM and Secure Boot, which Windows 11 requires.
+About 580 MB, from `cloud-images.ubuntu.com`. It fetches the published `SHA256SUMS`, checks the
+signature when `gpg` is on the machine, downloads beside the target rather than onto it, and
+deletes anything whose hash does not match instead of keeping it. Then it unpacks and converts
+to whatever the backend boots.
 
-**2. Install Ubuntu on WAZUH-MANAGER.** Host name `wazuh-manager`, static 172.29.70.10, OpenSSH
-enabled. The manager needs outbound internet through the NAT to fetch the Wazuh installer.
+This is a disk that has already been installed, so there is no Ubuntu ISO to source and no
+operating system installer to sit through. Preparing it wants about 36 GB free for a few
+minutes, because the Hyper-V image unpacks to a 30 GB disk before it is compacted. Everything
+lands under `storageRoot`, beside the VM disks, not inside the clone. Run it once.
 
-**3. Install and configure the manager.**
+## 3. Build the seeds
+
+```
+.\setup\New-LabSeeds.ps1
+```
+
+Builds the cloud-init seed ISOs for the Ubuntu guests: the account, the SSH key, the host name,
+the static address, and `/etc/wazuh-lab/lab.env`, which is `lab.config.json` rendered as shell
+assignments so the guest scripts read the same values the host does.
+
+For the full profile, also:
+
+```
+.\setup\New-WindowsSeed.ps1
+```
+
+Builds the Windows unattend seed. Windows is the one guest that still installs from an ISO.
+The free **Windows 11 Enterprise evaluation** image works, needs no product key and is the
+easy option; it is a single-edition ISO, so leave `-ImageName` and `-ProductKey` unset. For a
+multi-edition retail or VL ISO, pass `-ImageName` with the edition as the image list names it,
+or Setup stops on the edition picker and waits for a human. Microsoft's generic Volume License
+Setup Key for Windows 11 Pro selects the edition and activates nothing; pass it as
+`-ProductKey` if your ISO needs one. An unactivated guest is fine for a lab that gets deleted.
+
+## 4. Create the VMs
+
+```
+.\setup\New-Lab.ps1
+```
+
+Elevated. Creates the network, the VMs for the profile, and attaches the boot disk and the seed
+to each. Add `-WindowsIso <path>` on the full profile.
+
+The Ubuntu guests boot the image from step 2 and configure themselves from the seed on first
+boot, which takes seconds rather than the fifteen minutes an installer took. The Windows guest
+runs its installer unattended.
+
+Nothing autostarts. The VMs are created stopped, and the only autostart value the dashboard can
+write is `Nothing`, because three VMs waking up on login is 11 GB of somebody else's RAM.
+
+## 5. Install the manager
+
+The manager scripts are not in the guest, so copy them across and run them there. From the
+repository root:
+
+```
+scp -i .lab-secrets\lab_ed25519 -r manager labadmin@172.29.70.10:~/
+ssh -i .lab-secrets\lab_ed25519 labadmin@172.29.70.10
+```
+
+Then, on the manager:
 
 ```
 sudo bash manager/install-manager.sh
@@ -63,39 +149,41 @@ sudo bash manager/configure-manager.sh
 sudo bash manager/configure-dashboard.sh
 ```
 
-The first installs manager, indexer and dashboard and pins them to 4.14.7. The second deploys
-`lab_rules.xml`, validates it, disables `authd`, and writes one agent identity per endpoint into
-`/root/wazuh-lab-keys/`. All three refuse to run anywhere except the manager host.
+The first installs manager, indexer and dashboard, pinned to the version in
+`lab.config.json`, and then runs `tune-manager.sh` from beside it: indexer heap sized to the
+profile, vulnerability detection off since this lab never queries the feed it downloads,
+syscollector lengthened, and an index rollover policy so the alert indices do not grow without
+bound. Copy the whole `manager` directory rather than the one file, or the tuning is skipped
+and it says so.
+
+The second deploys `lab_rules.xml`, validates it, disables `authd`, and writes one agent
+identity per endpoint into `/root/wazuh-lab-keys/`.
 
 The third creates the `wazuh-alerts-*` index pattern and makes it the default. Do not skip it.
-Wazuh does not create an index pattern during installation: it is created the first time somebody
-opens the web UI. A lab built entirely over SSH therefore ends up with a working detection
-pipeline and a dashboard that renders nothing at all, which is easy to mistake for a detection
-failure.
+Wazuh does not create an index pattern during installation; it is created the first time
+somebody opens the web UI. A lab built entirely over SSH otherwise ends up with a working
+detection pipeline and a dashboard that renders nothing, which is easy to mistake for a
+detection failure.
 
-**4. Install Ubuntu on WAZUH-LINUX.** Host name `wazuh-linux`, static 172.29.70.30.
-
-**5. Configure the Linux agent.** Copy `wazuh-linux.key` from the manager over SSH, then:
+## 6. Enrol the endpoints
 
 ```
-sudo bash linux/install-agent.sh 172.29.70.10 ./wazuh-linux.key
+.\setup\Install-LabAgents.ps1
 ```
 
-This installs the agent, auditd rules keyed `wazuh_lab_cron`, and realtime file monitoring on the
-cron directories. Wait for the first file integrity scan to finish before testing S3, otherwise
-the cron change has no baseline to compare against.
+For each endpoint in the profile: collect its key from the manager, copy the key and the
+installer across, and run the installer there. The key never touches the repository and is
+deleted from this host as soon as it has been delivered. `-Only WAZUH-LINUX` does one of them.
 
-**6. Install Windows on WAZUH-WIN.** Computer name `WAZUH-WIN`, static 172.29.70.20.
+The privileged install on the endpoint asks for the console password. Have it ready: the
+dashboard's credentials panel shows it, or it is in `.lab-secrets\console-password.txt`.
 
-**7. Configure the Windows agent.** Copy `wazuh-windows.key` across, then from an elevated
-prompt:
+On Linux this installs the agent, the auditd rules keyed `wazuh_lab_cron`, and realtime
+monitoring on the cron directories. Wait for the first file integrity scan to finish before
+testing S3, or the cron change has no baseline to compare against.
 
-```
-.\agents\windows\Install-Agent.ps1 -ManagerAddress 172.29.70.10 -AgentKeyFile .\wazuh-windows.key
-```
-
-This enables three audit subcategories that are off by default. Without them the events simply
-are not written:
+On Windows it enables three audit subcategories that are off by default. Without them the
+events are not written at all:
 
 | Subcategory | Setting | Gives |
 | --- | --- | --- |
@@ -105,55 +193,91 @@ are not written:
 
 The existing policy is backed up to `%ProgramData%\WazuhLab` first.
 
-**8. Confirm both agents report as active** in the manager before running anything.
+## 7. Let the dashboard read the manager
 
-**9. Take a checkpoint of each endpoint.** S2 and S3 create local accounts and scheduled jobs.
-The scripts clean up after themselves, but a checkpoint is the reliable reset.
+```
+.\dashboard\Enable-LabDashboard.ps1
+```
+
+Run once, after the lab is built. It installs three root-owned helpers on the manager and one
+sudoers rule granting the lab account exactly those commands and nothing else: the agent list,
+an authenticated search against the indexer over its admin certificate, and the per-endpoint
+baseline the scoring divides by. Without it the dashboard still works and says which of those
+it cannot read. See `dashboard/README.md`.
+
+## 8. Checkpoint the endpoints
+
+S2 and S3 create local accounts and scheduled jobs. The scenario scripts clean up after
+themselves on every exit path, but a checkpoint is the reliable reset.
+
+---
 
 ## Running the scenarios
 
+From the dashboard, or on the Linux endpoint after step 7:
+
 ```
-.\agents\windows\Invoke-Scenario.ps1 -Scenario S1            # and S2, S3
-.\agents\windows\Invoke-Scenario.ps1 -Scenario S1 -Comparison
-
-sudo bash linux/invoke-scenario.sh S1 test
-sudo bash linux/invoke-scenario.sh S1 comparison
+sudo lab-scenario S1 test
+sudo lab-scenario S1 comparison
+sudo lab-campaign start 14
 ```
 
-Comparison mode is the benign case for R4. For S1 it makes a single failed logon, which is below
-the alert threshold. For S2 and S3 it performs the same action and records it as approved
-activity, because the point of those scenarios is that the behaviour is ambiguous and needs an
-analyst, not that it is inherently malicious.
+and on the Windows endpoint, from an elevated prompt:
 
-Each run writes source events and a `run.json` to an evidence directory. `indexedDetection` stays
-`not_checked` until the matching alert is confirmed in the dashboard, so a run is not evidence of
-detection on its own.
+```
+.\Invoke-Scenario.ps1 -Scenario S1            # and S2, S3
+.\Invoke-Scenario.ps1 -Scenario S1 -Comparison
+```
+
+`lab-scenario` and `lab-campaign` are wrappers step 7 installs, and the sudoers rule names
+the exact invocations they accept rather than the script, so the dashboard can start one
+without a password and nothing else can be run through the grant.
+
+Every scenario performs a real action and then verifies the OS-native event exists, failing
+loudly if it does not. S1 on Linux stands up a throwaway `sshd` and drives real authentication
+at it; on Windows it calls `LogonUser` and asserts the error is 1326. S2 is a real `useradd`
+or `New-LocalUser`, S3 a real `/etc/cron.d` write or `Register-ScheduledTask`. Nothing is
+injected into a log.
+
+Comparison mode is the benign case. For S1 it makes a single failed logon, which is below the
+alert threshold. For S2 and S3 it performs the same action and records it as approved activity,
+because the point of those two is that the behaviour is ambiguous and needs an analyst, not
+that it is inherently malicious.
+
+Each run writes source events and a `run.json` to an evidence directory. `indexedDetection`
+stays `not_checked` until the matching alert is confirmed in the dashboard, so a run is not
+evidence of detection on its own.
 
 ## Running the lab day to day
 
 `Lab.cmd`, at the root of the repository, is the front door. It opens the dashboard in your
 browser, and that is where the lab is started, watched and stopped from. It asks for elevation
-once at launch, because Hyper-V will not report VM state otherwise.
+once at launch, because the hypervisor will not report VM state otherwise.
 
-The page checks the machine before it opens: virtualization enabled in firmware, the Hyper-V
-platform live, the switch and NAT, all three VMs, `.lab-secrets`, and an SSH client. Anything
-blocking is named along with the command that fixes it. It also shows the logins for the Wazuh
-web interface and all three guests, with the passwords masked until asked for.
+The page runs the same preflight as step 0 before it opens, so anything blocking is named along
+with the command that fixes it. It also shows the logins for the Wazuh web interface and all
+three guests, with the passwords masked until asked for.
 
 "Bring the lab up" starts the manager, waits for it to boot and for the four Wazuh services to
-come up, then starts both endpoints and waits for the agents to check in. "Take the lab down"
+come up, then starts the endpoints and waits for the agents to check in. "Take the lab down"
 reverses it, endpoints first and the manager last, so the indexer is the final thing to close.
 
-It will not start anything by itself. Opening it is read-only, and the only autostart value it can
-write is `Nothing`.
+Opening the dashboard is read-only. It will not start anything by itself.
 
-Run `dashboard/Enable-LabDashboard.ps1` once, after the lab is built, so the dashboard
-can also read alerts, agent state and the indexer. Without it the dashboard still works and says
-which of those it cannot read. See `dashboard/README.md`.
+## Taking it apart
+
+```
+.\setup\Remove-Lab.ps1                 the VMs and the network, disks left alone
+.\setup\Remove-Lab.ps1 -DeleteDisks    and the disks
+.\setup\Remove-Lab.ps1 -KeepNetwork    the VMs only
+```
+
+Nothing under `.lab-secrets` or `evidence` is touched, and the keys still work against a
+rebuilt lab because the seeds carry the same public key.
 
 ## Worth knowing
 
-S1 makes exactly six failed attempts and rule 100111 fires at six. That is deliberate, since the
-five-attempt case has to stay below the threshold, but it means the run has no spare margin. If
-an alert does not appear, check the captured source event count first. The scripts verify those
-events exist and fail loudly if they are short.
+S1 makes exactly six failed attempts and rule 100111 fires at six. That is deliberate, since
+the five-attempt case has to stay below the threshold, but it means the run has no spare
+margin. If an alert does not appear, check the captured source event count first; the scripts
+verify those events exist and fail loudly if they are short.
