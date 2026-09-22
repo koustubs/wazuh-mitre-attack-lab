@@ -17,6 +17,8 @@ fi
 : "${LAB_AGENT_ADDRS:=172.29.70.20 172.29.70.30}"
 : "${LAB_WAZUH_VERSION:=4.14.7}"
 : "${LAB_WAZUH_PKG_VERSION:=4.14.7-1}"
+: "${LAB_BACKEND:=hyperv}"
+: "${LAB_MANAGER_VM:=WAZUH-MANAGER}"
 
 [[ $(hostname -s) == "$LAB_MANAGER_HOST" ]] || { echo "Run this on the $LAB_MANAGER_HOST lab VM." >&2; exit 1; }
 . /etc/os-release
@@ -24,6 +26,35 @@ fi
     echo 'This setup targets Ubuntu 24.04 amd64.' >&2; exit 1;
 }
 [[ ! -d /var/ossec ]] || { echo 'Wazuh already exists. Use configure-manager.sh for rule updates.' >&2; exit 1; }
+# The Wazuh installation assistant refuses to install below 3700 MB of usable memory or two
+# cores, and it does so after this script has already run apt and downloaded the installer.
+# Checked here instead, because the failure this catches does not look like a memory problem
+# from the outside.
+#
+# The case that produces it: Hyper-V dynamic memory reclaims an idle guest down to its floor,
+# so a manager created with 4096 MB of startup memory is running on its minimum by the time
+# anyone gets round to installing. free reports what the balloon left, not what the VM was
+# created with, and the assistant reads free.
+mem_mb=$(free -m | awk '/^Mem:/{print $2}')
+cores=$(nproc)
+if (( mem_mb < 3700 || cores < 2 )); then
+    echo "This guest has ${mem_mb} MB of usable memory and ${cores} core(s)." >&2
+    echo 'The Wazuh installation assistant wants 3700 MB and 2 cores and will refuse.' >&2
+    if [[ $LAB_BACKEND == hyperv ]]; then
+        echo >&2
+        echo 'If the VM was created with more than this, dynamic memory has reclaimed it. The' >&2
+        echo 'floor can only be raised while the VM is off. On the host, elevated:' >&2
+        echo >&2
+        echo "  Stop-VM -Name $LAB_MANAGER_VM -Force" >&2
+        echo "  Set-VMMemory -VMName $LAB_MANAGER_VM -MinimumBytes 4GB -StartupBytes 4GB" >&2
+        echo "  Start-VM -Name $LAB_MANAGER_VM" >&2
+        echo >&2
+        echo 'To keep it raised across a rebuild, set minMemoryMb for this VM in lab.config.json.' >&2
+    else
+        echo 'Raise the memory for this VM in lab.config.json and rebuild it.' >&2
+    fi
+    exit 1
+fi
 mkdir -p /root/wazuh-lab-install
 cd /root/wazuh-lab-install
 log=/root/wazuh-lab-install/install.log

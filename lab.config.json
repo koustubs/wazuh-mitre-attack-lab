@@ -42,7 +42,7 @@
         { "label": "ssh 22", "port": 22 }
       ],
       "resources": {
-        "lean": { "memoryMb": 4096, "minMemoryMb": 2048, "maxMemoryMb": 6144, "cpu": 2, "diskGb": 32 },
+        "lean": { "memoryMb": 4096, "minMemoryMb": 4096, "maxMemoryMb": 6144, "cpu": 2, "diskGb": 32 },
         "full": { "memoryMb": 6144, "minMemoryMb": 4096, "maxMemoryMb": 8192, "cpu": 4, "diskGb": 60 }
       }
     },

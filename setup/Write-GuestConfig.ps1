@@ -74,6 +74,7 @@ $values = [ordered]@{
     LAB_DNS               = ($config.network.dns -join ' ')
     LAB_GUEST_USER        = $config.guest.user
     LAB_TIMEZONE          = $config.guest.timezone
+    LAB_MANAGER_VM        = 'WAZUH-MANAGER'
     LAB_MANAGER_HOST      = Get-LabVmField 'WAZUH-MANAGER' 'Hostname'
     LAB_MANAGER_ADDR      = Get-LabVmField 'WAZUH-MANAGER' 'Address'
     LAB_LINUX_HOST        = Get-LabVmField 'WAZUH-LINUX' 'Hostname'
