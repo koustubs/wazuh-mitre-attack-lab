@@ -249,6 +249,16 @@ function New-LabVm {
 
     Set-VMProcessor -VM $vm -Count $Cpu
     Set-VM -VM $vm -AutomaticStartAction Nothing -AutomaticStopAction ShutDown -CheckpointType Standard
+
+    # Client Hyper-V has automatic checkpoints on by default, so every start writes a differencing
+    # .avhdx under Snapshots and the disk the profile budgeted stops being the disk in use. Off
+    # here rather than left as something to go and find. Server 2016 has no such setting and is
+    # older than this lab supports, so a host without it is told rather than failed.
+    if ((Get-Command Set-VM).Parameters.ContainsKey('AutomaticCheckpointsEnabled')) {
+        Set-VM -VM $vm -AutomaticCheckpointsEnabled $false
+    } else {
+        Write-Warning ("{0}: this host has no automatic checkpoint setting, so Hyper-V may take one on every start." -f $Name)
+    }
     if ($MacAddress) { Set-VMNetworkAdapter -VM $vm -StaticMacAddress $MacAddress }
 
     # Dynamic memory on, reversing the original. A guest that is idle hands its pages back, which

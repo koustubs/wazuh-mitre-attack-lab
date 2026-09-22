@@ -13,6 +13,7 @@
         .\Remove-Lab.ps1                 the VMs and the network, disks left on disk
         .\Remove-Lab.ps1 -DeleteDisks    and the disks
         .\Remove-Lab.ps1 -KeepNetwork    the VMs only
+        .\Remove-Lab.ps1 -Only WAZUH-WIN one machine, to replace a dead endpoint
         .\Remove-Lab.ps1 -Force          no confirmation prompt
 #>
 [CmdletBinding()]
@@ -22,6 +23,11 @@ param(
     [string]$StorageRoot,
     [switch]$DeleteDisks,
     [switch]$KeepNetwork,
+    # Part of the profile rather than all of it, the other half of New-Lab's -Only. Replacing
+    # an endpoint that will not boot should not take down a manager that was half an hour of
+    # installing. The network is kept whenever this is given, because removing one guest is
+    # not a reason to remove the switch the others are still on.
+    [string[]]$Only,
     [switch]$Force
 )
 $ErrorActionPreference = 'Stop'
@@ -29,7 +35,11 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'LabBackend.ps1')
 
 $config = if ($Profile) { Get-LabConfig -Profile $Profile } else { Get-LabConfig }
-$vms    = if ($Profile) { Get-LabVms -Profile $Profile }    else { Get-LabVms }
+$pass = @{}
+if ($Profile) { $pass['Profile'] = $Profile }
+if ($Only)    { $pass['Only']    = $Only }
+$vms = Get-LabVms @pass
+if ($Only) { $KeepNetwork = $true }
 if (-not $Backend) { $Backend = $config.backend }
 Import-LabBackend -Backend $Backend | Out-Null
 
