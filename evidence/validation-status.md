@@ -116,7 +116,7 @@ not "did" and this is the list of what a re-run would be covering.
   previous guests were installed from an ISO. Same release, different image.
 - The VirtualBox backend has never built a lab. Every result here was measured on Hyper-V.
   What has been checked is structural, and only that: both backend modules define the same
-  sixteen functions with the same parameter names and the same mandatory arguments, both return
+  seventeen functions with the same parameter names and the same mandatory arguments, both return
   the same fields from `Get-LabVmInfo` and `Get-LabNetworkInfo`, and `virtualbox.psm1` imports
   cleanly on a host with no VirtualBox installed. Nothing has run `VBoxManage`.
 - The Windows endpoint is reached over OpenSSH rather than PowerShell Direct, which is what

@@ -9,6 +9,8 @@
         Get-LabVmInfo        -Name                  $null, or the shape below
         Invoke-LabVmAction   -Name -Action          a job, for start|shutdown|restart|forceoff
         Set-LabVmNoAutostart -Name
+        Send-LabVmKey        -Name [-Key] [-Repeat] [-IntervalMs]
+                                                    @{ sent; refused; detail }
         Get-LabNetworkInfo   -NetworkName -Subnet -Gateway
                                                     @{ SwitchPresent; NatPresent; SwitchKind;
                                                        NatKind; NatFix }

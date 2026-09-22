@@ -8,7 +8,8 @@
     cloud image Get-LabImage.ps1 prepared, and cloud-init configures them from the seed
     New-LabSeeds.ps1 built, on their first boot. The Windows endpoint, which the full profile
     includes and the lean one does not, still boots an installer, driven by the unattend seed
-    from New-WindowsSeed.ps1.
+    from New-WindowsSeed.ps1. Its first boot is Start-WindowsInstall.ps1 rather than a power
+    button, because Windows media waits about five seconds for a key press and then gives up.
 
     This checks the handful of things it is about to depend on and refuses on those.
     Test-LabHost.ps1 is what tells you whether the machine can host the lab at all; run it
@@ -202,14 +203,19 @@ if ($vms.Contains('WAZUH-MANAGER')) {
     Write-Host ("  2. ssh -i {0} {1}@{2}" -f $keyPath, $config.guest.user, $manager.Address)
     Write-Host '  3. Copy the whole manager directory over and run manager/install-manager.sh with sudo.'
     if ($windowsCount -gt 0) {
-        Write-Host '  4. The Windows endpoint installs itself from the unattend seed. It reboots twice.'
+        Write-Host '  4. Start the Windows endpoint: setup\Start-WindowsInstall.ps1'
+        Write-Host '     Its installer waits about five seconds for a key press before giving up,'
+        Write-Host '     so it is started by that rather than by a power button. Two reboots, then'
+        Write-Host '     it is done: about twenty minutes, unattended.'
     }
 } else {
     # A subset build against a manager that is already up, so the install steps above are behind
     # us and what is left is the new guest joining what is already there.
     if ($windowsCount -gt 0) {
-        Write-Host '  1. The Windows endpoint installs itself from the unattend seed. It reboots twice.'
-        Write-Host '     Give it twenty minutes or so before the next step.'
+        Write-Host '  1. Start it: setup\Start-WindowsInstall.ps1'
+        Write-Host '     Its installer waits about five seconds for a key press before giving up.'
+        Write-Host '     That presses it, and Setup runs unattended from there: two reboots, and'
+        Write-Host '     twenty minutes or so before the next step.'
     } else {
         Write-Host '  1. Start it and give cloud-init a minute or two on its first boot.'
     }

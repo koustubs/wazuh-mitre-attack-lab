@@ -227,6 +227,36 @@ function Set-LabVmNoAutostart {
     # service has been installed and given a policy, and this project never installs it.
 }
 
+function Send-LabVmKey {
+    <#
+        The VirtualBox half of Send-LabVmKey. See the Hyper-V module for why this exists.
+
+        Scan codes rather than a virtual key, in make and break pairs: VBoxManage sends exactly
+        what it is given, and a make with no break is a key held down.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [ValidateSet('space', 'enter')][string]$Key = 'space',
+        [int]$Repeat = 1,
+        [int]$IntervalMs = 500
+    )
+
+    $codes = switch ($Key) { 'space' { @('39', 'b9') } 'enter' { @('1c', '9c') } }
+
+    $sent = 0; $refused = 0
+    for ($i = 0; $i -lt $Repeat; $i++) {
+        $result = Invoke-VBox -Arguments (@('controlvm', $Name, 'keyboardputscancode') + $codes)
+        if ($result.Code -eq 0) { $sent++ } else { $refused++ }
+        if ($i -lt ($Repeat - 1)) { Start-Sleep -Milliseconds $IntervalMs }
+    }
+
+    $detail = ''
+    if ($sent -eq 0) {
+        $detail = ("VBoxManage would not send a key to {0}, which a VM that is not running will not accept, so it has to be pressed at the console." -f $Name)
+    }
+    [ordered]@{ sent = $sent; refused = $refused; detail = $detail }
+}
+
 function Get-LabNetworkInfo {
     param(
         [Parameter(Mandatory)][string]$NetworkName,
@@ -484,6 +514,6 @@ function Remove-LabVm {
 }
 
 Export-ModuleMember -Function Test-LabBackendAvailable, Get-LabVmInfo, Invoke-LabVmAction,
-    Set-LabVmNoAutostart, Get-LabNetworkInfo, New-LabNetwork, Remove-LabNetwork,
+    Set-LabVmNoAutostart, Send-LabVmKey, Get-LabNetworkInfo, New-LabNetwork, Remove-LabNetwork,
     Test-LabNetworkConflict, New-LabVm, Add-LabVmDvd, Add-LabVmDisk, Resize-LabVmDisk,
     ConvertTo-LabBootDisk, Copy-LabBootDisk, Get-LabBootDiskExtension, Remove-LabVm

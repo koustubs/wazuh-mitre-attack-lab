@@ -295,6 +295,7 @@ wazuh-threat-detection/
     New-LabSeeds.ps1            cloud-init seeds for the Ubuntu guests
     New-WindowsSeed.ps1         autounattend seed for the Windows endpoint
     New-Lab.ps1                 the network and the profile's VMs, on either backend
+    Start-WindowsInstall.ps1    the Windows endpoint's first boot, past the installer's prompt
     Install-LabAgents.ps1       collects each agent key and enrols the endpoint
     Remove-Lab.ps1              teardown; disks are kept unless asked for
     Write-GuestConfig.ps1       lab.config.json as shell, for the guests that cannot read it
@@ -303,8 +304,8 @@ wazuh-threat-detection/
     LabPreflight.ps1            the host checks, shared by Test-LabHost and the dashboard
     LabIso.ps1                  ISO authoring over IMAPI2FS
     backends/
-      hyperv.psm1               one contract, sixteen functions
-      virtualbox.psm1           the same sixteen, against VBoxManage, never yet run
+      hyperv.psm1               one contract, seventeen functions
+      virtualbox.psm1           the same seventeen, against VBoxManage, never yet run
     .lab-secrets/               gitignored: keys, password, seed images
   manager/
     install-manager.sh          manager, indexer and dashboard pinned, and the firewall
@@ -372,6 +373,8 @@ wazuh-threat-detection/
 3. `setup\Get-LabImage.ps1`. Fetches and verifies the Ubuntu cloud image, once.
 4. `setup\New-LabSeeds.ps1`, and `setup\New-WindowsSeed.ps1` on the full profile.
 5. `setup\New-Lab.ps1`, elevated. The Ubuntu guests configure themselves on first boot.
+   On the full profile, `setup\Start-WindowsInstall.ps1` then starts the Windows endpoint and
+   presses the key its installer waits about five seconds for.
 6. Copy `manager/` to the manager and run `install-manager.sh`, `configure-manager.sh`, then
    `configure-dashboard.sh`. Do not skip the third: without it the dashboard renders nothing,
    however well detection is working.

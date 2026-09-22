@@ -133,8 +133,23 @@ Elevated. Creates the network, the VMs for the profile, and attaches the boot di
 to each. Add `-WindowsIso <path>` on the full profile.
 
 The Ubuntu guests boot the image from step 2 and configure themselves from the seed on first
-boot, which takes seconds rather than the fifteen minutes an installer took. The Windows guest
-runs its installer unattended.
+boot, which takes seconds rather than the fifteen minutes an installer took.
+
+The Windows guest still boots an installer, and its first boot is a script rather than a power
+button:
+
+```
+.\setup\Start-WindowsInstall.ps1
+```
+
+Windows media, retail and evaluation alike, shows `Press any key to boot from CD or DVD` for
+about five seconds. Unpressed, the boot manager hands back to the firmware, which reports `The
+boot loader failed` against the DVD and falls through to a disk with no operating system on it
+yet. The guest then sits there having written nothing, and no log on either side says why. That
+script starts the VM and presses the key across the whole window rather than at a guessed point
+in it, and Setup runs unattended from there: two reboots, about twenty minutes, nothing else to
+press. Later boots need none of it, because the installed disk sits behind the ISO in the boot
+order, so the prompt lapses and the firmware moves on to Windows.
 
 Nothing autostarts. The VMs are created stopped, and the only autostart value the dashboard can
 write is `Nothing`, because three VMs waking up on login is 11 GB of somebody else's RAM.

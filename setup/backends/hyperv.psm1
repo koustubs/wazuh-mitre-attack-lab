@@ -95,6 +95,60 @@ function Set-LabVmNoAutostart {
     Set-VM -Name $Name -AutomaticStartAction Nothing
 }
 
+function Send-LabVmKey {
+    <#
+        Presses a key at a guest's console, for the one place this lab needs one.
+
+        Windows media shows "Press any key to boot from CD or DVD" for about five seconds.
+        Unpressed, the boot manager hands back to the firmware, which reports "The boot loader
+        failed" against the DVD and falls through to a disk with no operating system on it. The
+        guest then sits there having written nothing, and no log on either side says why.
+
+        Repeated rather than timed, because firmware start-up is not a fixed length: the window
+        is hit by pressing across it instead of predicting where it falls. Presses outside it go
+        nowhere, since the firmware discards them and an unattended Setup takes no input.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [ValidateSet('space', 'enter')][string]$Key = 'space',
+        [int]$Repeat = 1,
+        [int]$IntervalMs = 500
+    )
+
+    $code = switch ($Key) { 'space' { 0x20 } 'enter' { 0x0D } }
+    $ns = 'root/virtualization/v2'
+
+    $machine = Get-CimInstance -Namespace $ns -ClassName Msvm_ComputerSystem `
+        -Filter ("ElementName='{0}'" -f $Name) -ErrorAction SilentlyContinue
+    if (-not $machine) {
+        return [ordered]@{ sent = 0; refused = 0; detail = ("There is no VM called {0}." -f $Name) }
+    }
+
+    $keyboard = Get-CimAssociatedInstance -InputObject $machine -ResultClassName Msvm_Keyboard `
+        -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $keyboard) {
+        return [ordered]@{
+            sent = 0; refused = 0
+            detail = ("{0} exposes no synthetic keyboard, which a stopped VM does not, so the key has to be pressed at its console." -f $Name)
+        }
+    }
+
+    $sent = 0; $refused = 0
+    for ($i = 0; $i -lt $Repeat; $i++) {
+        try {
+            $result = Invoke-CimMethod -InputObject $keyboard -MethodName TypeKey `
+                -Arguments @{ keyCode = [uint32]$code }
+            if ($result.ReturnValue -eq 0) { $sent++ } else { $refused++ }
+        } catch {
+            # Counted, not thrown. A press refused while the VM is still coming up says nothing
+            # about the next one, and one lost press out of sixty is not a failure.
+            $refused++
+        }
+        if ($i -lt ($Repeat - 1)) { Start-Sleep -Milliseconds $IntervalMs }
+    }
+    [ordered]@{ sent = $sent; refused = $refused; detail = '' }
+}
+
 function Get-LabNetworkInfo {
     <#
         Whether the lab network exists, as two separate facts, because they fail separately: a
@@ -373,6 +427,6 @@ function Remove-LabVm {
 }
 
 Export-ModuleMember -Function Test-LabBackendAvailable, Get-LabVmInfo, Invoke-LabVmAction,
-    Set-LabVmNoAutostart, Get-LabNetworkInfo, New-LabNetwork, Remove-LabNetwork,
+    Set-LabVmNoAutostart, Send-LabVmKey, Get-LabNetworkInfo, New-LabNetwork, Remove-LabNetwork,
     Test-LabNetworkConflict, New-LabVm, Add-LabVmDvd, Add-LabVmDisk, Resize-LabVmDisk,
     ConvertTo-LabBootDisk, Copy-LabBootDisk, Get-LabBootDiskExtension, Remove-LabVm

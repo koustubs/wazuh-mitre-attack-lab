@@ -688,7 +688,7 @@ The report builder uses saved measurement artefacts and a generated `figures.jso
 | `lab.config.json` | Backend, profile, addresses, sizes and versions: the one place they are written down. | Versioned source. |
 | `docs/design/` | The coursework the build started from: context, scenarios, acceptance requirements and the proposed stack, with the PlantUML context diagram. | Historical design, written before the build. |
 | `setup/` | Host preflight, secrets and seed builders, image fetch, provisioning, agent enrolment and teardown. | Versioned tooling. |
-| `setup/backends/` | One sixteen-function contract, implemented for Hyper-V and for VirtualBox. Only the Hyper-V side has ever run. | Versioned tooling. |
+| `setup/backends/` | One seventeen-function contract, implemented for Hyper-V and for VirtualBox. Only the Hyper-V side has ever run. | Versioned tooling. |
 | `dashboard/` | PowerShell server, HTML UI, launcher and guest-permission setup. | Versioned application. |
 | `.lab-secrets/` | SSH keys, console credentials and installation seeds. | Local only; excluded from Git. |
 | `manager/` | Pinned installation, rule deployment, native dashboard setup and custom rules. | Versioned configuration. |

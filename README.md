@@ -35,7 +35,7 @@ Hyper-V needs Windows Pro, Enterprise or Education. VirtualBox runs on Home as w
 machine that already has it. Nothing here installs a hypervisor.
 
 **The VirtualBox backend is written and has never built a lab.** Everything measured in this
-repository was measured on Hyper-V. Both backends are held to the same sixteen function contract
+repository was measured on Hyper-V. Both backends are held to the same seventeen function contract
 and that contract is checked: the two modules define the same functions with the same parameter
 names and the same mandatory arguments, return the same fields, and `virtualbox.psm1` imports
 cleanly on a host with no VirtualBox installed. None of that exercises `VBoxManage`. Hyper-V is
