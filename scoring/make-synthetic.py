@@ -22,7 +22,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from alert_stream import (Alert, COMPOSITE_RULE, COMPOSITE_THRESHOLD, Episode, EPISODE_KINDS,
                           write_episodes)
 
-MIN_S1_GAP = 150          # matches run-campaign.sh
+MIN_S1_GAP = 330          # matches run-campaign.sh
 STAFF = [("labstaff1", 60, 0, 48), ("labstaff2", 30, 0, 7), ("labstaff3", 10, 0, 48)]
 
 # The same weights run-campaign.sh's pick_episode uses.

@@ -43,11 +43,22 @@ They are created before recording starts and removed when the campaign ends.
 
 ## Two constraints that shaped it
 
-**Rule 100111 is `frequency="6" timeframe="120"`.** Two S1 runs closer together than the
-timeframe share a counting window, so failures from the first are counted towards the second
-and a benign run can be swept into a composite alert it did not cause. That is a wrong label
-going into training data, which is worse than having less of it. The runner holds S1 runs at
-least 150 seconds apart and says so in the log when it waits.
+**S1 runs have to be spaced, and further apart than rule 100111 alone suggests.** Two runs
+closer together than the counting windows share a window, so failures from the first are counted
+towards the second and a benign run can be swept into a composite alert it did not cause. That is
+a wrong label going into training data, which is worse than having less of it.
+
+100111 is `frequency="6" timeframe="120"`, and 120 seconds is not the binding number. The stock
+ruleset correlates across runs as well and over longer spans: 5551 is frequency 8 / timeframe
+180, 40111 is 12 / 160, and 40501 is 4 / 300. One S1 run produces six PAM login failures, so two
+inside those spans produce twelve and cross thresholds a single run never reaches. Analysisd
+emits one alert per event, so the stock composite takes the event 100111 was counting towards
+and 100111 does not fire at all.
+
+Measured on the lean profile, three consecutive S1 test runs: on a quiet host 100111 fired 17.4
+seconds in; 45 seconds later a second run produced no 100111 but 5551, then 40111, then 40501 at
+level 15; 315 seconds after that a third run produced 100111 again. The runner holds S1 runs at
+least 330 seconds apart and says so in the log when it waits.
 
 **The same threshold constrains the labels.** `comparison` takes 1 to 5 failed logons and
 `test` takes 6 or more. `invoke-scenario.sh` now rejects any other pairing outright rather than
