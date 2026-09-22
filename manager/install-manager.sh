@@ -74,16 +74,17 @@ grep -Fx "readonly wazuh_version=\"$LAB_WAZUH_VERSION\"" wazuh-install.sh >/dev/
 }
 sha256sum wazuh-install.sh > installer.sha256
 # Restrict access before starting the platform. Keys are provisioned manually.
-ufw default deny incoming >>"$log" 2>&1
-ufw default allow outgoing >>"$log" 2>&1
-ufw allow from "$LAB_GATEWAY" to any port 22 proto tcp >>"$log" 2>&1
-ufw allow from "$LAB_GATEWAY" to any port 443 proto tcp >>"$log" 2>&1
-# One rule per endpoint the profile actually builds. The lean profile has no Windows endpoint,
-# so it gets no rule for one, rather than a rule for an address nothing answers on.
-for agent_addr in $LAB_AGENT_ADDRS; do
-    ufw allow from "$agent_addr" to any port 1514 proto tcp >>"$log" 2>&1
-done
-ufw --force enable >>"$log" 2>&1
+#
+# In its own script so that it can be run again. Inline here it was applied once, before Wazuh
+# existed, and a later profile change had no way to reach it: going from lean to full adds an
+# endpoint the manager then refuses to accept a connection from, with no symptom beyond an agent
+# that never checks in.
+firewall="$here/configure-firewall.sh"
+if [[ ! -r $firewall ]]; then
+    echo 'configure-firewall.sh is not beside this script. Copy the whole manager directory.' >&2
+    exit 1
+fi
+bash "$firewall" >>"$log" 2>&1
 bash wazuh-install.sh -a >>"$log" 2>&1
 for package in wazuh-manager wazuh-indexer wazuh-dashboard; do
     [[ $(dpkg-query -W -f='${Version}' "$package") == "$LAB_WAZUH_PKG_VERSION" ]] || { echo "Unexpected $package version." >&2; exit 1; }

@@ -155,11 +155,38 @@ sudo bash manager/configure-dashboard.sh
 ```
 
 The first installs manager, indexer and dashboard, pinned to the version in
-`lab.config.json`, and then runs `tune-manager.sh` from beside it: indexer heap sized to the
-profile, vulnerability detection off since this lab never queries the feed it downloads,
-syscollector lengthened, and an index rollover policy so the alert indices do not grow without
-bound. Copy the whole `manager` directory rather than the one file, or the tuning is skipped
-and it says so.
+`lab.config.json`. Before it installs anything it runs `configure-firewall.sh` from beside it,
+which opens 22 and 443 to the host and 1514 to each endpoint the profile builds and denies
+everything else. After the install it runs `tune-manager.sh`, also from beside it: indexer heap
+sized to the profile, vulnerability detection off since this lab never queries the feed it
+downloads, syscollector lengthened, and an index rollover policy so the alert indices do not
+grow without bound. Copy the whole `manager` directory rather than the one file. The firewall
+step is a hard failure if it is missing, because installing Wazuh with nothing in front of it is
+worse than not installing it; the tuning step only says so.
+
+### Changing profile on a manager that is already built
+
+Two things on the manager come from the profile and neither updates itself. Going from lean to
+full adds a Windows endpoint at .20, and until both are re-run the agent will not enrol and will
+not check in, with nothing in the manager's logs to say why, because the packets never arrive.
+
+```
+scp -i .lab-secrets\lab_ed25519 -r manager labadmin@172.29.70.10:~/
+ssh -i .lab-secrets\lab_ed25519 labadmin@172.29.70.10
+```
+
+```
+sudo bash manager/configure-firewall.sh
+sudo bash manager/configure-manager.sh
+```
+
+The first opens 1514 to the endpoints the new profile builds and closes it to any it no longer
+does. The second adds an agent identity for each new endpoint and leaves existing ones alone.
+Both are idempotent. The guest reads the profile from `/etc/wazuh-lab/lab.env`, which is written
+from `lab.config.json` into the seed, so a guest built under the old profile still holds the old
+one: regenerate it with `setup\Write-GuestConfig.ps1` and copy it to
+`/etc/wazuh-lab/lab.env` first, or both scripts will faithfully re-apply the profile you are
+leaving.
 
 The second deploys `lab_rules.xml`, validates it, disables `authd`, and writes one agent
 identity per endpoint into `/root/wazuh-lab-keys/`.
