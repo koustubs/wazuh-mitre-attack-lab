@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 Build the progress update and print it to docs/Wazuh-Lab-Progress-Update.pdf.
 
@@ -12,7 +12,11 @@ not add a dependency that would stop this being regenerated.
 #>
 [CmdletBinding()]
 param(
-    [string]$OutFile = (Join-Path $PSScriptRoot '..\Wazuh-Lab-Progress-Update.pdf'),
+    # Where the finished PDF lands. Empty means the docs directory above this one; the default
+    # is resolved in the body, because $PSScriptRoot is not reliably populated inside a param
+    # block on Windows PowerShell 5.1 and the empty string it leaves behind reaches Join-Path
+    # as a binding failure that names Join-Path rather than this script.
+    [string]$OutFile,
     [switch]$Open
 )
 
@@ -20,6 +24,9 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $here = $PSScriptRoot
+if (-not $here) { $here = Split-Path -Parent $MyInvocation.MyCommand.Path }
+if (-not $here) { throw 'Cannot resolve the script directory. Run this script by path.' }
+if (-not $OutFile) { $OutFile = Join-Path $here '..\Wazuh-Lab-Progress-Update.pdf' }
 $html = Join-Path $here 'update.html'
 
 $python = @('python', 'py') |

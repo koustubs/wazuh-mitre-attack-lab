@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 Creates the credentials the lab is built on. This is the first step of a rebuild, before
 New-LabSeeds.ps1 and New-WindowsSeed.ps1, both of which read the files written here.
@@ -24,11 +24,30 @@ Replacing the set invalidates access to any VM already built with the old key, w
 #>
 [CmdletBinding()]
 param(
-    [string]$SecretsPath = (Join-Path $PSScriptRoot '.lab-secrets'),
+    # Where the key and the console password land. Empty means the repository's own
+    # .lab-secrets, resolved in the body rather than here for two reasons.
+    #
+    # $PSScriptRoot is not reliably populated inside a param block on Windows PowerShell 5.1,
+    # and an empty string reaches Join-Path as a parameter binding failure naming Join-Path
+    # rather than this script, which is the least useful place to start looking. The same
+    # defect cost this project a broken Build-Report.ps1.
+    #
+    # And the default was setup\.lab-secrets, one level below where everything else looks.
+    # Get-LabPath Secrets is what the rest of the project resolves, so a key written anywhere
+    # else is a key no other script can find.
+    [string]$SecretsPath,
     [switch]$Force
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+if (-not $SecretsPath) {
+    $here = $PSScriptRoot
+    if (-not $here) { $here = Split-Path -Parent $MyInvocation.MyCommand.Path }
+    if (-not $here) { throw 'Cannot resolve the script directory. Run this script by path.' }
+    . (Join-Path $here 'LabConfig.ps1')
+    $SecretsPath = Get-LabPath Secrets
+}
 
 $CryptAlphabet = './0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 
