@@ -183,9 +183,14 @@ if ($ImageName) {
 }
 
 # Likewise. The evaluation image rejects a key, and a Pro ISO needs one to skip the prompt.
-$productKey = ''
+#
+# Named $productKeyXml and not $productKey because PowerShell does not distinguish case in a
+# variable name: $productKey and the $ProductKey parameter are one variable, so clearing it
+# here threw the key away and the test below then never fired. -ProductKey silently did
+# nothing, Setup stopped on the product key page, and the guest sat there with an empty disk.
+$productKeyXml = ''
 if ($ProductKey) {
-    $productKey = @"
+    $productKeyXml = @"
 
         <ProductKey><Key>$ProductKey</Key><WillShowUI>OnError</WillShowUI></ProductKey>
 "@
@@ -227,7 +232,7 @@ $xml = @"
         </OSImage>
       </ImageInstall>
       <UserData>
-        <AcceptEula>true</AcceptEula>$productKey
+        <AcceptEula>true</AcceptEula>$productKeyXml
       </UserData>
     </component>
   </settings>
