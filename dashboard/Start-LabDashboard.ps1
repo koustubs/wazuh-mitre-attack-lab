@@ -47,34 +47,27 @@ if (-not $script:IsElevated -and -not $NoElevate) {
 
 Import-Module Hyper-V -ErrorAction Stop
 
-# Names, addresses and roles match New-Lab.ps1 and the deployment guide. This is the only place
-# they are written down in this tool; change them here if the lab changes.
-$LabVms = [ordered]@{
-    'WAZUH-MANAGER' = [ordered]@{
-        Role    = 'Manager, indexer and dashboard'
-        Address = '172.29.70.10'
-        Probes  = @(@{ Label = 'dashboard 443'; Port = 443 }, @{ Label = 'ssh 22'; Port = 22 })
-    }
-    'WAZUH-WIN' = [ordered]@{
-        Role    = 'Windows endpoint, agent 001'
-        Address = '172.29.70.20'
-        # Nothing to probe. The Windows firewall drops inbound connections by default and the
-        # agent connects outbound to the manager, so silence here is correct, not a fault.
-        Probes  = @()
-    }
-    'WAZUH-LINUX' = [ordered]@{
-        Role    = 'Linux endpoint, agent 002'
-        Address = '172.29.70.30'
-        Probes  = @(@{ Label = 'ssh 22'; Port = 22 })
-    }
-}
+# Names, addresses, roles and sizes all come from lab.config.json at the repository root. They
+# used to be written here and in seven other files, which had to agree and which nothing checked.
+# Changing the subnet meant finding all eight.
+. (Join-Path $PSScriptRoot '..\setup\LabConfig.ps1')
+
+$LabConfig  = Get-LabConfig
+$LabProfile = $LabConfig.profile
+$LabNetwork = $LabConfig.network
+$LabBudget  = Get-LabBudget
+
+# The VMs this profile builds, manager first. The lean profile has no Windows endpoint, and its
+# absence is correct rather than a VM that has gone missing.
+$LabVms = Get-LabVms
 
 # Service health and recent alerts come over SSH using the lab key. Note what is NOT here: the
 # Windows endpoint is never contacted. Its agent's connection state is reported by the manager,
 # which knows whether each agent is checking in, so this tool never needs Windows guest
 # credentials and never opens a port on that machine.
-$LabSshKey = Join-Path $PSScriptRoot '..\.lab-secrets\lab_ed25519'
-$LabSshUser = 'labadmin'
+$LabSshKey = Join-Path (Get-LabPath Secrets) 'lab_ed25519'
+$LabSshUser = $LabConfig.guest.user
+$LabSshNull = Get-LabNullDevice
 $ManagerAddress = $LabVms['WAZUH-MANAGER'].Address
 
 # Units the Advanced panel may control, and the only ones the sudoers rule permits. Anything not
@@ -435,7 +428,7 @@ print(json.dumps(out))
 # Missing either file is not an error. The markers stay unsubstituted, the remote script finds
 # no model, and the panel says the model file is absent. A lab that has never run the
 # modelling step still gets a working dashboard.
-$script:ScorerPath = Join-Path $PSScriptRoot '..\scoring\scorer'
+$script:ScorerPath = Get-LabPath Scorer
 $script:ScorerLoaded = $false
 try {
     $modelPath = Join-Path $script:ScorerPath 'model.json'
@@ -561,7 +554,7 @@ function Invoke-LabSsh {
             '-i', ('"{0}"' -f $LabSshKey)
             '-o', 'BatchMode=yes'
             '-o', 'StrictHostKeyChecking=no'
-            '-o', 'UserKnownHostsFile=NUL'
+            '-o', ('UserKnownHostsFile={0}' -f $LabSshNull)
             '-o', ('ConnectTimeout={0}' -f $ConnectSeconds)
             ('{0}@{1}' -f $LabSshUser, $Address)
             ('"{0}"' -f $Command)
@@ -699,13 +692,13 @@ function Invoke-LabScenario {
 
     if ($VmName -eq 'WAZUH-LINUX') {
         Start-Job -Name $label -ScriptBlock {
-            param($Key, $User, $Address, $Scenario, $Mode)
+            param($Key, $User, $Address, $Scenario, $Mode, $NullDevice)
             # Without this a failure is a non-terminating error, the job still reports Completed,
             # and the page cheerfully says the scenario finished when nothing happened.
             $ErrorActionPreference = 'Stop'
             $sshArgs = @(
                 '-i', $Key, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no',
-                '-o', 'UserKnownHostsFile=NUL', '-o', 'ConnectTimeout=8',
+                '-o', ('UserKnownHostsFile={0}' -f $NullDevice), '-o', 'ConnectTimeout=8',
                 ('{0}@{1}' -f $User, $Address),
                 ('sudo -n /usr/local/bin/lab-scenario {0} {1}' -f $Scenario, $Mode)
             )
@@ -714,9 +707,9 @@ function Invoke-LabScenario {
                 throw ('the endpoint refused it: {0}' -f (($output -join ' ').Trim()))
             }
             ($output | Select-Object -Last 1)
-        } -ArgumentList $LabSshKey, $LabSshUser, $LabVms[$VmName].Address, $Scenario, $Mode | Out-Null
+        } -ArgumentList $LabSshKey, $LabSshUser, $LabVms[$VmName].Address, $Scenario, $Mode, $LabSshNull | Out-Null
     } else {
-        $passwordFile = Join-Path $PSScriptRoot '..\.lab-secrets\console-password.txt'
+        $passwordFile = Join-Path (Get-LabPath Secrets) 'console-password.txt'
         $scriptFile = Join-Path $PSScriptRoot '..\agents\windows\Invoke-Scenario.ps1'
         if (-not (Test-Path -LiteralPath $passwordFile)) { throw 'The console password is missing from .lab-secrets.' }
         if (-not (Test-Path -LiteralPath $scriptFile)) { throw 'The Windows scenario driver is missing from the repository.' }
@@ -923,20 +916,23 @@ function Get-LabPreflight {
             -Detail 'Not read, because Hyper-V is not answering yet.' `
             -Fix 'Clear the checks above first.'
     } else {
-        $sw = Get-VMSwitch -Name 'Wazuh-Lab' -ErrorAction SilentlyContinue
+        # The gateway with its last octet stripped, so the NAT lookup follows whatever
+        # lab.config.json says rather than a second literal written here.
+        $netPrefix = ($LabNetwork.gateway -replace '\.\d+$', '.')
+        $sw = Get-VMSwitch -Name $LabNetwork.name -ErrorAction SilentlyContinue
         $nat = @(Get-NetNat -ErrorAction SilentlyContinue |
-            Where-Object { $_.InternalIPInterfaceAddressPrefix -like '172.29.70.*' })
+            Where-Object { $_.InternalIPInterfaceAddressPrefix -like ($netPrefix + '*') })
         if (-not $sw) {
             $checks += New-LabCheck -Id 'network' -Label 'Lab network' -State 'fail' `
-                -Detail 'The internal switch Wazuh-Lab does not exist, so the VMs have nothing to attach to.' `
-                -Fix 'The switch and the NAT are both created by host\New-Lab.ps1. See the deployment guide.'
+                -Detail ('The internal switch {0} does not exist, so the VMs have nothing to attach to.' -f $LabNetwork.name) `
+                -Fix 'The switch and the NAT are both created by setup\New-Lab.ps1. See docs/setup.md.'
         } elseif ($nat.Count -eq 0) {
             $checks += New-LabCheck -Id 'network' -Label 'Lab network' -State 'warn' `
-                -Detail 'The Wazuh-Lab switch exists, but no NAT covers 172.29.70.0/24. The guests reach this host and each other, but not the internet.' `
-                -Fix 'New-NetNat -Name Wazuh-Lab -InternalIPInterfaceAddressPrefix 172.29.70.0/24'
+                -Detail ('The {0} switch exists, but no NAT covers {1}. The guests reach this host and each other, but not the internet.' -f $LabNetwork.name, $LabNetwork.subnet) `
+                -Fix ('New-NetNat -Name {0} -InternalIPInterfaceAddressPrefix {1}' -f $LabNetwork.name, $LabNetwork.subnet)
         } else {
             $checks += New-LabCheck -Id 'network' -Label 'Lab network' -State 'pass' `
-                -Detail 'Internal switch Wazuh-Lab, with NAT on 172.29.70.0/24.'
+                -Detail ('Internal switch {0}, with NAT on {1}.' -f $LabNetwork.name, $LabNetwork.subnet)
         }
     }
 
@@ -946,34 +942,36 @@ function Get-LabPreflight {
             -Detail 'Not read, because Hyper-V is not answering yet.' `
             -Fix 'Clear the checks above first.'
     } else {
+        # Measured against the profile, not against three. The lean profile builds two VMs
+        # and a Windows endpoint that is absent by design is not a fault.
         $absentVms = @($LabVms.Keys | Where-Object { -not $vmLookup[$_] })
         if ($absentVms.Count -eq $LabVms.Count) {
             $checks += New-LabCheck -Id 'vms' -Label 'Lab virtual machines' -State 'fail' `
-                -Detail 'None of the three lab VMs exist on this host. The lab has not been built here.' `
-                -Fix 'Follow the deployment guide from step 0. It builds all three.'
+                -Detail ('None of the {0} VMs in the {1} profile exist on this host. The lab has not been built here.' -f $LabVms.Count, $LabProfile) `
+                -Fix 'Follow docs/setup.md from the start. It builds them.'
         } elseif ($absentVms.Count -gt 0) {
             $checks += New-LabCheck -Id 'vms' -Label 'Lab virtual machines' -State 'fail' `
-                -Detail ('Missing: {0}. These names have to match New-Lab.ps1 exactly.' -f ($absentVms -join ', ')) `
-                -Fix 'Either create the missing VMs, or correct the names in the table at the top of Start-LabDashboard.ps1.'
+                -Detail ('Missing: {0}. These names have to match lab.config.json exactly.' -f ($absentVms -join ', ')) `
+                -Fix 'Either create the missing VMs, or correct the names in lab.config.json.'
         } else {
             $running = @($LabVms.Keys | Where-Object { $vmLookup[$_].State.ToString() -eq 'Running' }).Count
             $checks += New-LabCheck -Id 'vms' -Label 'Lab virtual machines' -State 'pass' `
-                -Detail ('All three present. {0} running.' -f $running)
+                -Detail ('All {0} present, {1} profile. {2} running.' -f $LabVms.Count, $LabProfile, $running)
         }
     }
 
     # 6. The credentials. This is the check that catches a fresh clone: .lab-secrets is correctly
     #    gitignored, so a clone has none of it, and without the key every SSH read fails.
-    $secretsDir = Join-Path $PSScriptRoot '..\.lab-secrets'
+    $secretsDir = Get-LabPath Secrets
     $needed = @('lab_ed25519', 'lab_ed25519.pub', 'console-password.txt', 'console-password.hash')
     $absent = @($needed | Where-Object { -not (Test-Path -LiteralPath (Join-Path $secretsDir $_)) })
     if ($absent.Count -eq 0) {
         $checks += New-LabCheck -Id 'secrets' -Label 'Lab credentials' -State 'pass' `
-            -Detail 'The SSH key and console password are present in host\.lab-secrets.'
+            -Detail 'The SSH key and console password are present in .lab-secrets.'
     } else {
         $checks += New-LabCheck -Id 'secrets' -Label 'Lab credentials' -State 'fail' `
-            -Detail ('Missing from host\.lab-secrets: {0}. Without the key, nothing inside the guests can be read.' -f ($absent -join ', ')) `
-            -Fix 'Run host\New-LabSecrets.ps1. On a fresh clone that is the first step. If the VMs already exist and the key was deleted, a new key will not match them.'
+            -Detail ('Missing from .lab-secrets: {0}. Without the key, nothing inside the guests can be read.' -f ($absent -join ', ')) `
+            -Fix 'Run setup\New-LabSecrets.ps1. On a fresh clone that is the first step. If the VMs already exist and the key was deleted, a new key will not match them.'
     }
 
     # 7. The SSH client. Present on Windows 11 by default, but it is an optional feature and can
@@ -999,7 +997,9 @@ function Get-LabPreflight {
             if ($vm -and $vm.State.ToString() -eq 'Running') { $labHoldingGb += $vm.MemoryAssigned / 1GB }
         }
     }
-    $labNeedsGb = 16
+    # Summed from lab.config.json by Get-LabBudget, so it cannot drift from what New-Lab.ps1
+    # actually allocates. It used to be the literal 16, written here and twice more in prose.
+    $labNeedsGb = $LabBudget.MemoryGb
     if ($null -eq $freeGb) {
         $checks += New-LabCheck -Id 'memory' -Label 'Memory headroom' -State 'unknown' `
             -Detail 'The available memory counter did not answer.'
@@ -1010,8 +1010,8 @@ function Get-LabPreflight {
                 -Detail ('{0} GB available for a lab that needs {1} GB.' -f $headroomGb, $labNeedsGb)
         } else {
             $checks += New-LabCheck -Id 'memory' -Label 'Memory headroom' -State 'warn' `
-                -Detail ('{0} GB available, and all three VMs need {1} GB of fixed memory. The last one to start would fail.' -f $headroomGb, $labNeedsGb) `
-                -Fix 'Close something, or run the manager on its own. Memory here is fixed rather than dynamic, so a running VM holds its full allocation.'
+                -Detail ('{0} GB available, and the {1} profile starts {2} VMs needing {3} GB. The last one to start would fail.' -f $headroomGb, $LabProfile, $LabVms.Count, $labNeedsGb) `
+                -Fix 'Close something, run the manager on its own, or switch to the lean profile in lab.config.json.'
         }
     }
 
@@ -1029,7 +1029,7 @@ function Get-LabPreflight {
         if ($null -eq $vmFreeGb) {
             $checks += New-LabCheck -Id 'disk' -Label 'Disk headroom' -State 'unknown' `
                 -Detail ('Drive {0} did not report free space.' -f $vmDrive)
-        } elseif ($vmFreeGb -ge 20) {
+        } elseif ($vmFreeGb -ge $LabBudget.DiskWithHeadroomGb / 4) {
             $checks += New-LabCheck -Id 'disk' -Label 'Disk headroom' -State 'pass' `
                 -Detail ('{0} GB free on {1}, where the VMs live.' -f $vmFreeGb, $vmDrive)
         } else {
@@ -1053,7 +1053,7 @@ function Get-LabPreflight {
                 -Detail 'No lab VM starts with the host.'
         } else {
             $checks += New-LabCheck -Id 'autostart' -Label 'Autostart locked off' -State 'warn' `
-                -Detail ('Set to start with the host: {0}. That is 16 GB waking up without being asked.' -f ($waking -join ', ')) `
+                -Detail ('Set to start with the host: {0}. That is {1} GB waking up without being asked.' -f ($waking -join ', '), $LabBudget.MemoryGb) `
                 -Fix 'Use "Lock: never autostart" under Advanced once the dashboard is open.'
         }
     }
@@ -1144,7 +1144,7 @@ function Export-LabFindings {
     $findings = @($sc.findings)
     $stamp = Get-Date
     $name = 'findings-' + $stamp.ToString('yyyyMMdd-HHmmss') + '.pdf'
-    $out = Join-Path $PSScriptRoot ('..\evidence\findings\' + $name)
+    $out = Join-Path (Get-LabPath Findings) $name
     $out = [IO.Path]::GetFullPath($out)
 
     $css = @'
@@ -1306,7 +1306,7 @@ function Get-LabCredentials {
     plaintext on disk already, and already gitignored; this neither improves that nor worsens it.
     #>
     $consolePassword = $null
-    $passwordFile = Join-Path $PSScriptRoot '..\.lab-secrets\console-password.txt'
+    $passwordFile = Join-Path (Get-LabPath Secrets) 'console-password.txt'
     if (Test-Path -LiteralPath $passwordFile) {
         try { $consolePassword = (Get-Content -LiteralPath $passwordFile -Raw).Trim() } catch { }
     }
@@ -1332,7 +1332,7 @@ function Get-LabCredentials {
     }
 
     $consoleProblem = $(if ($consolePassword) { $null }
-                        else { 'Not read. host\.lab-secrets\console-password.txt is missing. Run New-LabSecrets.ps1.' })
+                        else { 'Not read. .lab-secrets\console-password.txt is missing. Run setup\New-LabSecrets.ps1.' })
 
     [ordered]@{
         ok      = $true
@@ -1355,7 +1355,7 @@ function Get-LabCredentials {
                 username = $LabSshUser
                 secret   = $consolePassword
                 problem  = $consoleProblem
-                note     = $(if ($keyPresent) { 'SSH uses the key at host\.lab-secrets\lab_ed25519. The password below is for the Hyper-V console.' }
+                note     = $(if ($keyPresent) { 'SSH uses the key at .lab-secrets\lab_ed25519. The password below is for the Hyper-V console.' }
                              else { 'The SSH key is missing, so only the console password will work.' })
             }
             [ordered]@{

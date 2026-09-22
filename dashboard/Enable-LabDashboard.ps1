@@ -8,7 +8,8 @@ rights at all, and reports the rest as "not readable yet" rather than showing an
 What this adds is everything that needs root on the far side:
 
   Manager
-    - labadmin joins the wazuh group, which is what makes the alert log and ossec.log readable.
+    - the lab account joins the wazuh group, which is what makes the alert log and ossec.log
+      readable.
       Reading alerts is the main thing the dashboard does and it should not need root to do it.
     - a sudoers rule permitting exactly systemctl start, stop and restart on the four Wazuh
       units, agent_control -l, and the indexer summary below. Nothing else.
@@ -23,10 +24,12 @@ What this adds is everything that needs root on the far side:
       it could not read it, and nothing else changes.
 
   Linux endpoint
-    - labadmin joins the wazuh group.
+    - the lab account joins the wazuh group.
     - a sudoers rule permitting systemctl on wazuh-agent, and the six exact scenario runs.
     - invoke-scenario.sh installed to a stable path, with a wrapper that accepts only the six
       valid scenario and mode combinations.
+    - run-campaign.sh the same way, with a wrapper accepting start, stop and status. Without
+      this the dashboard could run a single scenario without a password but not a campaign.
 
 Every sudoers file is checked with visudo before it is installed, and nothing is written if that
 check fails, because a broken sudoers file locks you out of sudo entirely.
@@ -38,15 +41,26 @@ this run only, and stores nothing.
 #>
 [CmdletBinding()]
 param(
-    [string]$ManagerAddress = '172.29.70.10',
-    [string]$LinuxAddress   = '172.29.70.30',
-    [string]$User           = 'labadmin'
+    # Empty means "whatever lab.config.json says". Pass one to override it for this run.
+    [string]$ManagerAddress,
+    [string]$LinuxAddress,
+    [string]$User
 )
 
 $ErrorActionPreference = 'Stop'
-$keyPath = (Resolve-Path (Join-Path $PSScriptRoot '..\.lab-secrets\lab_ed25519')).Path
-if (-not (Test-Path -LiteralPath $keyPath)) { throw "Cannot find the lab SSH key at $keyPath" }
+. (Join-Path $PSScriptRoot '..\setup\LabConfig.ps1')
+
+$LabConfig = Get-LabConfig
+$LabVms = Get-LabVms
+if (-not $ManagerAddress) { $ManagerAddress = $LabVms['WAZUH-MANAGER'].Address }
+if (-not $LinuxAddress -and $LabVms.Contains('WAZUH-LINUX')) { $LinuxAddress = $LabVms['WAZUH-LINUX'].Address }
+if (-not $User) { $User = $LabConfig.guest.user }
+
+$keyPath = Join-Path (Get-LabPath Secrets) 'lab_ed25519'
+if (-not (Test-Path -LiteralPath $keyPath)) { throw "Cannot find the lab SSH key at $keyPath. Run setup\New-LabSecrets.ps1 first." }
+$keyPath = (Resolve-Path -LiteralPath $keyPath).Path
 $scenarioPath = (Resolve-Path (Join-Path $PSScriptRoot '..\agents\linux\invoke-scenario.sh')).Path
+$campaignPath = (Resolve-Path (Join-Path $PSScriptRoot '..\agents\linux\run-campaign.sh')).Path
 
 # Windows OpenSSH refuses a private key that other accounts can read. The key lives in a repo
 # folder, so tighten it here rather than leaving people to decode "UNPROTECTED PRIVATE KEY FILE".
@@ -54,13 +68,7 @@ Write-Host 'Restricting the SSH key to your account only...'
 & icacls.exe $keyPath /inheritance:r | Out-Null
 & icacls.exe $keyPath /grant:r ("{0}:R" -f $env:USERNAME) | Out-Null
 
-$sshCommon = @(
-    '-i', $keyPath, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no',
-    '-o', 'UserKnownHostsFile=NUL', '-o', 'ConnectTimeout=8',
-    # Without this, every call prints "Permanently added ... to the list of known hosts" on
-    # stderr, because the known hosts file is the null device and nothing is ever remembered.
-    '-o', 'LogLevel=ERROR'
-)
+$sshCommon = Get-LabSshOptions -KeyPath $keyPath
 
 function Invoke-Native {
     <#
@@ -229,6 +237,38 @@ SCENARIO
   echo "  installed /usr/local/bin/lab-scenario"
 fi
 
+if [ "$ROLE" = "endpoint" ] && [ -f /tmp/lab-run-campaign.sh ]; then
+  # The campaign is hours of scenario runs. Starting one from the dashboard used to prompt for a
+  # password, because the sudoers grant named the six scenario runs and not this.
+  mkdir -p /usr/local/lib/wazuh-lab
+  install -o root -g root -m 0755 /tmp/lab-run-campaign.sh /usr/local/lib/wazuh-lab/run-campaign.sh
+  rm -f /tmp/lab-run-campaign.sh
+  cat > /usr/local/bin/lab-campaign <<'CAMPAIGN'
+#!/bin/sh
+# Same shape as lab-scenario: a fixed set of invocations sudoers can name, rather than a script
+# plus free arguments. The hour count is checked here so the sudoers rule does not have to
+# enumerate 48 of them.
+set -eu
+case "${1:-}" in
+  start)
+    hours=${2:-14}
+    case "$hours" in ''|*[!0-9]*) echo 'hours must be a whole number' >&2; exit 2;; esac
+    [ "$hours" -ge 1 ] && [ "$hours" -le 48 ] || { echo 'hours must be 1 to 48' >&2; exit 2; }
+    exec /bin/bash /usr/local/lib/wazuh-lab/run-campaign.sh start --hours "$hours"
+    ;;
+  stop|status)
+    exec /bin/bash /usr/local/lib/wazuh-lab/run-campaign.sh "$1"
+    ;;
+  *)
+    echo 'Usage: lab-campaign start [hours] | stop | status' >&2
+    exit 2
+    ;;
+esac
+CAMPAIGN
+  chmod 0755 /usr/local/bin/lab-campaign
+  echo "  installed /usr/local/bin/lab-campaign"
+fi
+
 # 3. A narrow sudoers rule, validated before it is installed. An invalid file here would break
 #    sudo entirely, so this never writes to /etc/sudoers.d without visudo agreeing first.
 TMP=$(mktemp)
@@ -257,7 +297,14 @@ TMP=$(mktemp)
       done
     done
     printf '\n'
-    printf '%s ALL=(root) NOPASSWD: WAZUH_LAB_SVC, WAZUH_LAB_SCENARIO\n' "$SUDO_USER"
+    if [ -x /usr/local/bin/lab-campaign ]; then
+      # Three verbs, not a wildcard. lab-campaign itself refuses anything but a whole number of
+      # hours in range, so the grant does not have to enumerate every hour count.
+      printf 'Cmnd_Alias WAZUH_LAB_CAMPAIGN = /usr/local/bin/lab-campaign start *, /usr/local/bin/lab-campaign stop, /usr/local/bin/lab-campaign status\n'
+      printf '%s ALL=(root) NOPASSWD: WAZUH_LAB_SVC, WAZUH_LAB_SCENARIO, WAZUH_LAB_CAMPAIGN\n' "$SUDO_USER"
+    else
+      printf '%s ALL=(root) NOPASSWD: WAZUH_LAB_SVC, WAZUH_LAB_SCENARIO\n' "$SUDO_USER"
+    fi
   else
     printf '%s ALL=(root) NOPASSWD: WAZUH_LAB_SVC\n' "$SUDO_USER"
   fi
@@ -287,11 +334,18 @@ function Invoke-Setup {
     [IO.File]::WriteAllText($localFile, ($setupScript -replace "`r`n", "`n"), (New-Object Text.UTF8Encoding $false))
     try {
         if ($Role -eq 'endpoint') {
-            $r = Invoke-Native -Exe 'scp.exe' -Arguments ($sshCommon + @(
-                $scenarioPath, ("{0}@{1}:/tmp/lab-invoke-scenario.sh" -f $User, $Address)))
-            if ($r.Code -ne 0) {
-                throw ("Could not copy the scenario driver to {0}: {1}" -f
-                       $Address, (($r.Output | Out-String) -replace '\s+', ' ').Trim())
+            $drivers = @{
+                $scenarioPath = '/tmp/lab-invoke-scenario.sh'
+                $campaignPath = '/tmp/lab-run-campaign.sh'
+            }
+            foreach ($local in $drivers.Keys) {
+                $r = Invoke-Native -Exe 'scp.exe' -Arguments ($sshCommon + @(
+                    $local, ("{0}@{1}:{2}" -f $User, $Address, $drivers[$local])))
+                if ($r.Code -ne 0) {
+                    throw ("Could not copy {0} to {1}: {2}" -f
+                           (Split-Path -Leaf $local), $Address,
+                           (($r.Output | Out-String) -replace '\s+', ' ').Trim())
+                }
             }
         }
         $r = Invoke-Native -Exe 'scp.exe' -Arguments ($sshCommon + @(

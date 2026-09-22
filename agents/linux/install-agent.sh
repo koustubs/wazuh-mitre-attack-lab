@@ -2,7 +2,20 @@
 set -euo pipefail
 umask 077
 [[ $EUID == 0 ]] || { echo 'Run with sudo.' >&2; exit 1; }
-[[ $(hostname -s) == wazuh-linux ]] || { echo 'Run this on the wazuh-linux lab VM.' >&2; exit 1; }
+# Addresses, hostnames and versions come from lab.config.json on the host. Write-GuestConfig.ps1
+# turns it into this file and the seed builder installs it. The defaults below are the shipped
+# values, so a script copied here by hand still runs; it just uses the shipped subnet.
+lab_env=${LAB_ENV_FILE:-/etc/wazuh-lab/lab.env}
+if [[ -r $lab_env ]]; then
+    # shellcheck disable=SC1090
+    . "$lab_env"
+else
+    echo "No $lab_env. Using the shipped defaults." >&2
+fi
+: "${LAB_LINUX_HOST:=wazuh-linux}"
+: "${LAB_WAZUH_PKG_VERSION:=4.14.7-1}"
+
+[[ $(hostname -s) == "$LAB_LINUX_HOST" ]] || { echo "Run this on the $LAB_LINUX_HOST lab VM." >&2; exit 1; }
 [[ $# == 2 ]] || { echo 'Usage: sudo bash install-agent.sh MANAGER_IPV4 AGENT_KEY_FILE' >&2; exit 1; }
 . /etc/os-release
 [[ $ID == ubuntu && $VERSION_ID == 24.04 && $(dpkg --print-architecture) == amd64 ]] || {
@@ -25,7 +38,7 @@ chmod 644 /usr/share/keyrings/wazuh-lab.gpg
 printf '%s\n' 'deb [signed-by=/usr/share/keyrings/wazuh-lab.gpg] https://packages.wazuh.com/4.x/apt/ stable main' > /etc/apt/sources.list.d/wazuh-lab.list
 chmod 644 /etc/apt/sources.list.d/wazuh-lab.list
 apt-get update >>"$log" 2>&1
-apt-get install -y wazuh-agent=4.14.7-1 >>"$log" 2>&1
+apt-get install -y "wazuh-agent=$LAB_WAZUH_PKG_VERSION" >>"$log" 2>&1
 apt-mark hold wazuh-agent >>"$log" 2>&1
 systemctl stop wazuh-agent
 # Ubuntu's packaged rsyslog configuration routes auth/authpriv to auth.log.

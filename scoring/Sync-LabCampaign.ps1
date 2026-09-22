@@ -32,31 +32,34 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Address = '172.29.70.30',
-    [string]$User = 'labadmin',
+    # Empty means "whatever lab.config.json says". Passing one overrides it for this run, which
+    # is what you want when the endpoint has been rebuilt at a different address and you have
+    # not updated the config yet.
+    [string]$Address,
+    [string]$User,
     [switch]$Watch,
     [ValidateRange(30, 3600)][int]$IntervalSeconds = 300
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '..\setup\LabConfig.ps1')
 
-$SshKey = Join-Path $PSScriptRoot '..\.lab-secrets\lab_ed25519'
-$Destination = Join-Path $PSScriptRoot '..\evidence\campaigns'
+$LabConfig = Get-LabConfig
+$LabVms = Get-LabVms
+if (-not $Address) {
+    if (-not $LabVms.Contains('WAZUH-LINUX')) {
+        throw "The $($LabConfig.profile) profile has no Linux endpoint, so there is no campaign to sync. Pass -Address to point at one anyway."
+    }
+    $Address = $LabVms['WAZUH-LINUX'].Address
+}
+if (-not $User) { $User = $LabConfig.guest.user }
+
+$SshKey = Join-Path (Get-LabPath Secrets) 'lab_ed25519'
+$Destination = Join-Path (Get-LabPath Evidence) 'campaigns'
 $RemoteRoot = '/var/log/wazuh-lab/campaign'
 
-# Matches the dashboard's own SSH usage. UserKnownHostsFile=NUL rather than a real known_hosts
-# because these guests are rebuilt often and a changed host key is expected, not a warning.
-$SshCommon = @(
-    '-i', $SshKey
-    '-o', 'BatchMode=yes'
-    '-o', 'StrictHostKeyChecking=no'
-    '-o', 'UserKnownHostsFile=NUL'
-    '-o', 'ConnectTimeout=8'
-    # Without this, every single call prints "Permanently added ... to the list of known hosts"
-    # on stderr, because the known hosts file is the null device and nothing is ever remembered.
-    '-o', 'LogLevel=ERROR'
-)
+$SshCommon = Get-LabSshOptions -KeyPath $SshKey
 
 function Invoke-Native {
     <#

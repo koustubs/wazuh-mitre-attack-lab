@@ -1,0 +1,88 @@
+{
+  "backend": "hyperv",
+  "profile": "full",
+  "storageRoot": "D:/Wazuh-Lab",
+
+  "network": {
+    "name": "Wazuh-Lab",
+    "subnet": "172.29.70.0/24",
+    "prefixLength": 24,
+    "gateway": "172.29.70.1",
+    "dns": ["1.1.1.1", "8.8.8.8"]
+  },
+
+  "guest": {
+    "user": "labadmin",
+    "locale": "en_US.UTF-8",
+    "keyboard": "us",
+    "timezone": "UTC"
+  },
+
+  "profiles": {
+    "lean": {
+      "description": "Manager and Linux endpoint. Three of the six detection cases. Fits an 8 GB host.",
+      "vms": ["WAZUH-MANAGER", "WAZUH-LINUX"],
+      "indexerHeapMb": 1024
+    },
+    "full": {
+      "description": "Both endpoints. All six detection cases. Wants a 16 GB host.",
+      "vms": ["WAZUH-MANAGER", "WAZUH-WIN", "WAZUH-LINUX"],
+      "indexerHeapMb": 2048
+    }
+  },
+
+  "vms": {
+    "WAZUH-MANAGER": {
+      "role": "Manager, indexer and dashboard",
+      "hostname": "wazuh-manager",
+      "os": "ubuntu",
+      "address": "172.29.70.10",
+      "probes": [
+        { "label": "dashboard 443", "port": 443 },
+        { "label": "ssh 22", "port": 22 }
+      ],
+      "resources": {
+        "lean": { "memoryMb": 4096, "minMemoryMb": 2048, "maxMemoryMb": 6144, "cpu": 2, "diskGb": 32 },
+        "full": { "memoryMb": 6144, "minMemoryMb": 4096, "maxMemoryMb": 8192, "cpu": 4, "diskGb": 60 }
+      }
+    },
+    "WAZUH-WIN": {
+      "role": "Windows endpoint, agent 001",
+      "hostname": "WAZUH-WIN",
+      "os": "windows",
+      "address": "172.29.70.20",
+      "probes": [],
+      "resources": {
+        "full": { "memoryMb": 4096, "minMemoryMb": 2048, "maxMemoryMb": 6144, "cpu": 2, "diskGb": 64 }
+      }
+    },
+    "WAZUH-LINUX": {
+      "role": "Linux endpoint, agent 002",
+      "hostname": "wazuh-linux",
+      "os": "ubuntu",
+      "address": "172.29.70.30",
+      "probes": [
+        { "label": "ssh 22", "port": 22 }
+      ],
+      "resources": {
+        "lean": { "memoryMb": 1024, "minMemoryMb": 512,  "maxMemoryMb": 2048, "cpu": 1, "diskGb": 16 },
+        "full": { "memoryMb": 1536, "minMemoryMb": 1024, "maxMemoryMb": 2048, "cpu": 2, "diskGb": 20 }
+      }
+    }
+  },
+
+  "images": {
+    "ubuntu": {
+      "release": "24.04",
+      "baseUrl": "https://cloud-images.ubuntu.com/releases/noble/release/",
+      "hyperv": "ubuntu-24.04-server-cloudimg-amd64-azure.vhd.tar.gz",
+      "virtualbox": "ubuntu-24.04-server-cloudimg-amd64.vmdk",
+      "checksums": "SHA256SUMS"
+    }
+  },
+
+  "wazuh": {
+    "version": "4.14.7",
+    "packageVersion": "4.14.7-1"
+  }
+}
