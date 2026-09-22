@@ -36,6 +36,7 @@ indexer=https://127.0.0.1:9200
 [[ -f $ossec ]] || { echo "No $ossec. Run install-manager.sh first." >&2; exit 1; }
 
 changed_manager=0
+failed=0
 
 # ---- ossec.conf --------------------------------------------------------------------------------
 #
@@ -104,6 +105,7 @@ else
     if [[ $running == 1 ]]; then
         echo "  indexer heap ${LAB_INDEXER_HEAP_MB}m"
     else
+        failed=1
         echo "  WARNING: the indexer did not come back with -Xmx${LAB_INDEXER_HEAP_MB}m." >&2
         echo "  Check $dropin and 'journalctl -u wazuh-indexer'." >&2
     fi
@@ -118,61 +120,23 @@ fi
 # not through a write alias, so a rollover action has nothing to roll. Age-based deletion is what
 # actually keeps the disk from filling here.
 
-curl_indexer() {
-    curl -s --max-time 15 -k --cert "$certs/admin.pem" --key "$certs/admin-key.pem" "$@"
+here="$(dirname "$(readlink -f "$0")")"
+retention="$here/configure-retention.py"
+# Checked rather than assumed, in the same way install-manager.sh checks for the firewall
+# script. Copying one file out of the manager directory instead of the directory is the
+# likeliest way to get here, and "python3: not found" does not say that.
+[[ -r $retention ]] || {
+    echo '  configure-retention.py is not beside this script, so retention was not configured.' >&2
+    exit 1
 }
-
-ready=0
-for _ in $(seq 1 60); do
-    if curl_indexer -o /dev/null -w '%{http_code}' "$indexer/_cluster/health" 2>/dev/null | grep -qE '^2'; then
-        ready=1
-        break
-    fi
-    sleep 2
-done
-
-if [[ $ready != 1 ]]; then
-    echo '  WARNING: the indexer did not answer, so retention was not configured.' >&2
-    echo "  Re-run this script once 'systemctl status wazuh-indexer' is green." >&2
-    exit 0
-fi
-
-policy_id=wazuh-lab-retention
-if curl_indexer -o /dev/null -w '%{http_code}' "$indexer/_plugins/_ism/policies/$policy_id" | grep -q '^200$'; then
-    echo "  retention policy $policy_id already exists"
-else
-    body=$(cat <<JSON
-{
-  "policy": {
-    "description": "Wazuh lab: delete alert indices after ${LAB_ALERT_RETENTION_DAYS} days.",
-    "default_state": "hot",
-    "states": [
-      { "name": "hot",    "actions": [], "transitions": [ { "state_name": "delete", "conditions": { "min_index_age": "${LAB_ALERT_RETENTION_DAYS}d" } } ] },
-      { "name": "delete", "actions": [ { "delete": {} } ], "transitions": [] }
-    ],
-    "ism_template": [ { "index_patterns": ["wazuh-alerts-*"], "priority": 100 } ]
-  }
+command -v python3 >/dev/null || {
+    echo '  python3 is not installed, so retention was not configured.' >&2
+    exit 1
 }
-JSON
-)
-    response=$(curl_indexer -X PUT "$indexer/_plugins/_ism/policies/$policy_id" \
-        -H 'Content-Type: application/json' -d "$body")
-    if echo "$response" | grep -q '"_id"'; then
-        echo "  retention policy $policy_id created, ${LAB_ALERT_RETENTION_DAYS} days"
-    else
-        echo "  WARNING: the indexer refused the retention policy: $response" >&2
-    fi
-fi
+python3 "$retention" "$indexer" "$certs" "$LAB_ALERT_RETENTION_DAYS"
 
-# ism_template only applies to indices created after the policy exists, so anything already here
-# has to be attached by hand. A run on a fresh manager finds nothing to attach and says so.
-attach=$(curl_indexer -X POST "$indexer/_plugins/_ism/add/wazuh-alerts-*" \
-    -H 'Content-Type: application/json' -d "{\"policy_id\":\"$policy_id\"}")
-attached=$(echo "$attach" | grep -o '"failures":false' || true)
-if [[ -n $attached ]]; then
-    echo '  policy attached to the alert indices that already exist'
-else
-    echo '  no existing alert index needed the policy'
+if [[ $failed == 1 ]]; then
+    echo 'Tuning incomplete: the requested indexer heap was not confirmed.' >&2
+    exit 1
 fi
-
 echo 'Tuning done.'

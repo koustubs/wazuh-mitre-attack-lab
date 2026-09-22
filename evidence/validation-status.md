@@ -3,7 +3,7 @@
 What has been verified, how, and what has not. Raw run output stays out of Git because it
 carries account names and addresses; this file is the summary that can be committed.
 
-Everything below was verified on 11 September 2026, against Wazuh 4.14.7 and OpenSearch
+The results in sections 1 to 4 were verified on 11 September 2026, against Wazuh 4.14.7 and OpenSearch
 Dashboards 2.19.5, and the date is the verification rather than the last edit. The packaging
 work since then changed how the lab is built and how the dashboard reads it; none of those
 results have been re-run against a lab built the new way, and section 6 says what that leaves
@@ -128,3 +128,26 @@ not "did" and this is the list of what a re-run would be covering.
   all-in-one deployment. Nothing here was measured on it.
 - The dashboard reads alerts from the indexer rather than from a log tail, and scores each
   endpoint against its own baseline. Section 3 covers the presentation path as it was.
+
+## 7. Retention fix, 22 September 2026
+
+The source now checks yellow cluster health and retries temporary failures on the public ISM
+API. It distinguishes a missing policy from a failed lookup, checks attachment responses as
+JSON, and reads back the policy on existing alert indices. Different or disabled policies are
+reported for review. Tuning exits nonzero on failure; the installer reports incomplete tuning
+without treating an already completed Wazuh installation as failed.
+
+Sixteen local tests pass, covering recovery responses, exhausted retries, authentication
+failure, malformed JSON, existing attachments, missing policies, partial attachment, and
+readback that contradicts an apparent success. Both changed shell scripts pass Bash syntax
+checks. These checks do not establish that the fix works on the running manager.
+
+The fix was then applied to the running manager, and one run is recorded. It reported the heap,
+the disabled modules, and `retention already attached; verified on 1 indices`. That is the
+idempotent path: the policy was already there, matched what the script asks for, and read back
+on the one alert index present. Creating a policy, attaching one to an unmanaged index, and
+every failure path are covered by the tests above and have not run on the manager.
+
+The full-profile detection re-run is still pending. The Windows endpoint did not survive being
+saved and restored: its console shows a UEFI boot failure and it reports no address, so it has
+to be rebuilt rather than resumed.

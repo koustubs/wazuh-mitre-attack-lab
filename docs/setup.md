@@ -159,10 +159,28 @@ The first installs manager, indexer and dashboard, pinned to the version in
 which opens 22 and 443 to the host and 1514 to each endpoint the profile builds and denies
 everything else. After the install it runs `tune-manager.sh`, also from beside it: indexer heap
 sized to the profile, vulnerability detection off since this lab never queries the feed it
-downloads, syscollector lengthened, and an index rollover policy so the alert indices do not
+downloads, syscollector lengthened, and a 90-day deletion policy so the alert indices do not
 grow without bound. Copy the whole `manager` directory rather than the one file. The firewall
 step is a hard failure if it is missing, because installing Wazuh with nothing in front of it is
-worse than not installing it; the tuning step only says so.
+worse than not installing it. Tuning failures leave the completed Wazuh installation in place
+and print that tuning is incomplete. Re-run `sudo bash manager/tune-manager.sh` after resolving
+the reported error. Its `configure-retention.py` helper must remain beside it.
+
+Retention waits for yellow cluster health, retries temporary ISM failures, and reads back the
+policy attachments before reporting success. A failed lookup or attachment returns a nonzero
+status rather than being reported as an index with nothing to do.
+
+An existing policy whose settings differ is reported and left alone rather than overwritten, so
+changing `LAB_ALERT_RETENTION_DAYS` is a deliberate two step. Delete the old policy, then re-run
+tuning:
+
+```
+sudo curl -sk --cert /etc/wazuh-indexer/certs/admin.pem      --key /etc/wazuh-indexer/certs/admin-key.pem -X DELETE      https://127.0.0.1:9200/_plugins/_ism/policies/wazuh-lab-retention
+sudo bash manager/tune-manager.sh
+```
+
+Indices already attached to the deleted policy keep their old age condition until the new policy
+is attached, which the re-run does.
 
 ### Changing profile on a manager that is already built
 

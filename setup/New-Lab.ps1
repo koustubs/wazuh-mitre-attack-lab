@@ -200,7 +200,7 @@ if ($vms.Contains('WAZUH-MANAGER')) {
     Write-Host ("  1. Start {0} and give cloud-init a minute or two on its first boot." -f $manager.Name)
     Write-Host "     Either the dashboard's power buttons, or your hypervisor's own console."
     Write-Host ("  2. ssh -i {0} {1}@{2}" -f $keyPath, $config.guest.user, $manager.Address)
-    Write-Host '  3. Copy manager\install-manager.sh over and run it with sudo.'
+    Write-Host '  3. Copy the whole manager directory over and run manager/install-manager.sh with sudo.'
     if ($windowsCount -gt 0) {
         Write-Host '  4. The Windows endpoint installs itself from the unattend seed. It reboots twice.'
     }

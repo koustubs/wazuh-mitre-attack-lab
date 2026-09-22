@@ -105,7 +105,9 @@ echo 'Wazuh installed. Credentials and installer logs are in /root/wazuh-lab-ins
 tune="$here/tune-manager.sh"
 if [[ -r $tune ]]; then
     echo 'Tuning for this profile:'
-    bash "$tune"
+    if ! bash "$tune"; then
+        echo 'Wazuh is installed, but tuning is incomplete. Re-run tune-manager.sh after resolving its error.' >&2
+    fi
 else
     echo 'tune-manager.sh is not beside this script, so the indexer heap, the disabled modules'
     echo 'and the alert retention policy have not been applied. Copy it over and run it.'
