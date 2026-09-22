@@ -1,0 +1,31 @@
+flowchart LR
+    CLICK["User selects bring-up"]
+    MSTART["Start manager VM<br/>Phase deadline 90 seconds"]
+    SSHWAIT["Wait for manager SSH<br/>Deadline 300 seconds"]
+    SVCWAIT["Wait for four manager services<br/>Deadline 300 seconds"]
+    ESTART["Start both endpoints<br/>Deadline 180 seconds"]
+    AGWAIT["Wait for both active agents<br/>Deadline 420 seconds"]
+    READY["Lab ready"]
+    DOWN["User selects take-down"]
+    EOFF["Request endpoint shutdown<br/>Deadline 300 seconds"]
+    MOFF["Request manager shutdown last<br/>Deadline 300 seconds"]
+    OFF["Lab off"]
+    FAIL["Phase timeout or action failure<br/>Visible notice; no automatic force-off"]:::pending
+    subgraph EXEC["Scenario command paths"]
+        BTN["Explicit scenario action"]
+        LJOB["Linux background job"]
+        WRAP["SSH labadmin<br/>sudo -n lab-scenario Sx mode"]
+        LS["Installed Linux scenario driver"]
+        WJOB["Windows background job"]
+        WDIRECT["PowerShell Direct<br/>Guest credential, temporary script"]
+        WS["Windows scenario driver"]
+    end
+    CLICK --> MSTART --> SSHWAIT --> SVCWAIT --> ESTART --> AGWAIT --> READY
+    READY --> DOWN --> EOFF --> MOFF --> OFF
+    SSHWAIT -.->|timeout| FAIL
+    SVCWAIT -.->|timeout| FAIL
+    AGWAIT -.->|timeout| FAIL
+    BTN --> LJOB --> WRAP --> LS
+    BTN --> WJOB --> WDIRECT --> WS
+    classDef pending fill:#fff3db,stroke:#a66516,color:#533600
+    classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29

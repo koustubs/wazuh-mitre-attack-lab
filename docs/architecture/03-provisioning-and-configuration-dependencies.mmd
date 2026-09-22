@@ -1,0 +1,42 @@
+flowchart LR
+    MEDIA["Ubuntu and Windows ISOs"]
+    PREFLIGHT["Get-LabHost.ps1<br/>Read host capacity and virtualization"]
+    SECRETS["New-LabSecrets.ps1"]
+    PRIVATE[("host/.lab-secrets<br/>SSH keypair, console password and hash")]
+    CREATE["New-Lab.ps1<br/>Validate paths, space, names and NAT"]
+    VMS["Switch, NAT, disks and VM definitions"]
+    USEED["New-LabSeeds.ps1<br/>Ubuntu NoCloud seed images"]
+    WSEED["New-WindowsSeed.ps1<br/>Windows answer-file image"]
+    BOOT["Attach media and boot guests<br/>Ubuntu GRUB autoinstall step"]
+    OS["Installed OS, labadmin<br/>Hostnames and static network"]
+    MI["install-manager.sh<br/>Version gate, firewall, all-in-one install"]
+    MC["configure-manager.sh<br/>Deploy rules and validate analysisd"]
+    KEYS[("Manager client.keys<br/>Per-endpoint key exports")]
+    MD["configure-dashboard.sh<br/>Create index pattern and default view"]
+    WI["Windows Install-Agent.ps1<br/>Signed MSI, audit policy, config and key"]
+    LI["Linux install-agent.sh<br/>APT package, rsyslog, auditd and FIM"]
+    READY["Agents enrolled and reporting<br/>Wait for initial FIM baseline"]
+    ENABLE["Enable-LabDashboard.ps1<br/>Guest group access, wrappers and sudoers"]
+    OPERATE["Lab.cmd<br/>Normal operation"]
+    RET["MANUAL DEPLOYMENT STATE<br/>90-day index retention policy<br/>Not reproduced by setup scripts"]:::pending
+    PREFLIGHT --> CREATE
+    MEDIA --> CREATE --> VMS --> BOOT
+    SECRETS --> PRIVATE
+    PRIVATE --> USEED --> BOOT
+    PRIVATE --> WSEED --> BOOT
+    MEDIA --> WSEED
+    BOOT --> OS --> MI --> MC
+    MC --> KEYS
+    MI --> MD
+    OS --> WI
+    OS --> LI
+    KEYS -->|private key transfer| WI
+    KEYS -->|private key transfer| LI
+    WI --> READY
+    LI --> READY
+    READY --> ENABLE --> OPERATE
+    MD --> OPERATE
+    MI -.-> RET
+    classDef pending fill:#fff3db,stroke:#a66516,color:#533600
+    classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29
+    class PRIVATE,KEYS store

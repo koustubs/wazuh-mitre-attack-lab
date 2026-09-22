@@ -1,0 +1,37 @@
+flowchart LR
+    AIT["AIT archive and labels.csv<br/>Eight controlled enterprise networks"]
+    IMPORT["import-ait.py<br/>Parse native alerts and ground truth"]
+    CACHE[("Per-source parsed cache<br/>Sorted timestamps and rule IDs")]
+    WINDOWS["300-second episodes<br/>Anchored to first capture alert<br/>Retain up to 256 alerts per episode"]
+    EPS[("episodes.jsonl and vocab.json<br/>Source, label, time, alerts")]
+    SYN["make-synthetic.py<br/>Fabricated lab-rule episodes"]
+    FUTURE["PENDING<br/>Labelled lab-alert exporter"]:::pending
+    SPLIT["features.py<br/>Time/source splits and vocabulary<br/>Unknown-rule bucket"]
+    COUNTS["tabular features<br/>Rule counts, unknown count<br/>Volume and timing"]
+    SHAPE["shape_only features<br/>Eleven volume, timing<br/>and severity measurements"]
+    SEQ["Sequence tensors<br/>Rule tokens and log time gaps<br/>Padding and lengths"]
+    BASE["baseline.py<br/>Single rule, always-attack<br/>NumPy logistic regression"]
+    GRU["train.py / AlertGRU<br/>Embedding 16, GRU 32<br/>Dropout and two-class head"]
+    EVAL["evaluate.py<br/>Eight outer held-out networks<br/>Three GRU seeds per fold"]
+    FOLDS[("data/ait/folds.jsonl<br/>Per-model F1 and AP")]
+    PT[("models/alert_gru_*.pt<br/>Offline experiment only")]
+    EXPORT["export-model.py<br/>Fit portable logistic on seven networks<br/>Select cutoff on Wilson"]
+    PARITY["Feature parity check<br/>features.py versus scorer/score.py"]
+    MODEL[("scorer/model.json<br/>Columns, means, scales, weights<br/>Bias, cutoff and provenance")]
+    DASH["Dashboard startup<br/>Embeds score.py and model.json"]
+    AIT --> IMPORT --> CACHE --> WINDOWS --> EPS
+    SYN --> EPS
+    FUTURE -.-> EPS
+    EPS --> SPLIT
+    SPLIT --> COUNTS --> BASE
+    SPLIT --> SHAPE --> BASE
+    SPLIT --> SEQ --> GRU --> PT
+    COUNTS --> EVAL
+    SHAPE --> EVAL
+    SEQ --> EVAL --> FOLDS
+    EPS --> EXPORT
+    FOLDS --> EXPORT
+    EXPORT --> PARITY --> MODEL --> DASH
+    classDef pending fill:#fff3db,stroke:#a66516,color:#533600
+    classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29
+    class CACHE,EPS,FOLDS,PT,MODEL store

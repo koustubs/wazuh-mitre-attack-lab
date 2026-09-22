@@ -1,0 +1,39 @@
+flowchart TB
+    INTERNET["Internet<br/>Vendor packages, OS media, public dataset"]
+    subgraph HOST["Windows 11 Pro host"]
+        BROWSER["Local browser"]
+        HOSTAPI["Local dashboard server<br/>127.0.0.1:8077"]
+        ADMIN["Elevated PowerShell<br/>Hyper-V module"]
+        DISKS[("D:/Wazuh-Lab<br/>VM configuration and virtual disks")]
+        GW["vEthernet Wazuh-Lab<br/>172.29.70.1/24"]
+        NAT["WinNAT<br/>Outbound connectivity"]
+        SW["Internal switch: Wazuh-Lab<br/>Static addressing, no DHCP"]
+    end
+    subgraph MVM["Manager VM: Ubuntu 24.04 amd64"]
+        FW["ufw<br/>Default deny inbound"]
+        MS["172.29.70.10<br/>4 vCPU / 8 GiB / 80 GiB disk"]
+        SSH["sshd: TCP 22"]
+        WEB["Wazuh dashboard: HTTPS 443"]
+        EVENTS["Agent event receiver: TCP 1514"]
+        LOCAL["Internal services<br/>Indexer 9200 and manager API 55000"]
+    end
+    WVM["Windows 11 Pro VM<br/>172.29.70.20<br/>4 vCPU / 6 GiB / 80 GiB disk<br/>Secure Boot and virtual TPM"]
+    LVM["Ubuntu 24.04.5 VM<br/>172.29.70.30<br/>2 vCPU / 2 GiB / 24 GiB disk<br/>SSH 22 for administration"]
+    BROWSER --> HOSTAPI
+    HOSTAPI --> ADMIN
+    ADMIN -->|VM operations| MS
+    ADMIN -->|VM operations and PowerShell Direct| WVM
+    ADMIN -->|VM operations| LVM
+    ADMIN --> DISKS
+    SW --- GW --> NAT --> INTERNET
+    MS --- SW
+    WVM --- SW
+    LVM --- SW
+    GW -->|host-only access| FW
+    FW --> SSH
+    FW --> WEB
+    WVM -->|outbound 1514| EVENTS
+    LVM -->|outbound 1514| EVENTS
+    FW -.->|not opened to endpoints or host network| LOCAL
+    classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29
+    class DISKS store

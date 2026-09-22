@@ -1,0 +1,41 @@
+flowchart LR
+    START["Lab.cmd<br/>PowerShell 5.1 launcher"]
+    ELEV["Elevation check<br/>UAC or NoElevate mode"]
+    INIT["Startup loads<br/>HTML, lab_rules.xml, score.py, model.json"]
+    HTTP["HttpListener<br/>Loopback 8077<br/>Per-run X-Lab-Token"]
+    PAGE["Browser UI<br/>Preflight, coverage, alerts, scoring<br/>Pipeline, resources and Advanced controls"]
+    STATE["/api/state<br/>Get-LabState"]
+    PRE["/api/preflight<br/>Host and prerequisite checks"]
+    CREDS["/api/creds<br/>Explicit access-panel request"]
+    POWER["/api/action and /api/lab<br/>Individual VM jobs and lab sequence"]
+    SERVICE["/api/service<br/>Allowed service actions"]
+    RUN["/api/scenario<br/>Background scenario job"]
+    EXPORT["/api/export-findings<br/>Export current completed findings"]
+    LOCK["/api/lock-autostart<br/>Write Nothing only"]
+    QUIT["/api/quit<br/>Stop dashboard listener"]
+    VM["Hyper-V and host counters<br/>VM state, CPU, RAM, disk and uptime"]
+    HEALTH["Manager status over SSH<br/>10-second health cache"]
+    PROBE["Nonblocking TCP probes<br/>15-second cache"]
+    JOBS["Job notices<br/>Asynchronous completion or failure"]
+    START --> ELEV --> INIT --> HTTP
+    HTTP -->|HTML and JSON responses| PAGE
+    PAGE -->|3-second requests while active| HTTP
+    HTTP --> STATE
+    HTTP --> PRE
+    HTTP --> CREDS
+    HTTP --> POWER
+    HTTP --> SERVICE
+    HTTP --> RUN
+    HTTP --> EXPORT
+    HTTP --> LOCK
+    HTTP --> QUIT
+    STATE --> VM
+    STATE --> HEALTH
+    STATE --> PROBE
+    STATE --> JOBS
+    POWER --> VM
+    POWER --> JOBS
+    RUN --> JOBS
+    LOCK --> VM
+    SERVICE -->|SSH and restricted sudo| HEALTH
+    classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29

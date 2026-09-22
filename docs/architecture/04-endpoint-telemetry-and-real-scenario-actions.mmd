@@ -1,0 +1,46 @@
+flowchart LR
+    subgraph W["Windows guest"]
+        WP["Audit policy<br/>Logon failure<br/>User Account Management success<br/>Other Object Access success"]
+        WS["Invoke-Scenario.ps1<br/>Hostname and agent checks"]
+        W1["S1: disposable account<br/>LogonUser with wrong password<br/>Logon type 3, six or one attempts"]
+        W2["S2: New-LocalUser"]
+        W3["S3: Register-ScheduledTask<br/>cmd.exe /c exit 0, future trigger"]
+        WLOG[("Windows Security channel<br/>4625 / 4720 / 4698")]
+        WCOL["Agent eventchannel collector<br/>Explicit three-event query"]
+        WEVID[("ProgramData/WazuhLab/evidence<br/>Event XML, task XML, run.json")]
+        WCLEAN["finally cleanup<br/>Remove created account or task"]
+    end
+    subgraph L["Linux guest"]
+        LS["invoke-scenario.sh<br/>Root, hostname and agent checks"]
+        L1["S1: useradd and private sshd<br/>sshpass sends wrong passwords<br/>127.0.0.1:22222"]
+        L2["S2: useradd"]
+        L3["S3: temporary cron file<br/>/etc/cron.d/wz...<br/>Harmless true command"]
+        AUTH[("rsyslog /var/log/auth.log")]
+        AUD[("auditd /var/log/audit/audit.log")]
+        FIM["Agent syscheck<br/>Initial baseline and cron monitoring"]
+        LCOL["Agent logcollector<br/>syslog and audit formats"]
+        LEVID[("/var/log/wazuh-lab/evidence<br/>Source log, cron content, audit, run.json")]
+        LCLEAN["EXIT trap cleanup<br/>Stop private sshd, remove user and cron"]
+    end
+    SEND["Agent transport<br/>Manager TCP 1514"]
+    WS --> W1 --> WLOG
+    WS --> W2 --> WLOG
+    WS --> W3 --> WLOG
+    WP -.->|required event generation| WLOG
+    WLOG --> WCOL --> SEND
+    WLOG -->|filter by marker and start time| WEVID
+    W3 -->|export task definition| WEVID
+    WEVID --> WCLEAN
+    LS --> L1 --> AUTH
+    LS --> L2 --> AUTH
+    L2 --> AUD
+    LS --> L3 --> FIM --> SEND
+    L3 --> AUD
+    AUTH --> LCOL --> SEND
+    AUD --> LCOL
+    AUTH --> LEVID
+    AUD -->|ausearch with input-logs| LEVID
+    L3 -->|content and stat| LEVID
+    LEVID --> LCLEAN
+    classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29
+    class WLOG,WEVID,AUTH,AUD,LEVID store

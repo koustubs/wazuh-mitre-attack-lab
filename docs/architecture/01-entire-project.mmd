@@ -1,0 +1,59 @@
+flowchart TB
+    USER["Administrator / analyst"]
+    MITRE["MITRE ATT&CK<br/>Behaviour reference and technique IDs"]
+    subgraph HOST["Windows host: workstation and control plane"]
+        LAUNCH["Lab.cmd"]
+        UI["dashboard.html<br/>Browser on 127.0.0.1:8077"]
+        API["Start-LabDashboard.ps1<br/>Elevated PowerShell HTTP server"]
+        HV["Hyper-V<br/>Three Generation 2 VMs"]
+        OFF["Offline modelling<br/>Python, NumPy and PyTorch"]
+        MODEL[("scorer/model.json<br/>scorer/score.py")]
+        REPORTS[("Reports and local evidence")]
+    end
+    subgraph WIN["WAZUH-WIN: 172.29.70.20"]
+        WE["Security events<br/>4625 / 4720 / 4698"]
+        WA["Wazuh agent 001<br/>wazuh-windows"]
+        WR["Windows scenario driver"]
+    end
+    subgraph LIN["WAZUH-LINUX: 172.29.70.30"]
+        LE["auth.log, audit.log<br/>Cron file changes"]
+        LA["Wazuh agent 002<br/>wazuh-linux"]
+        LR["Linux scenario driver<br/>and optional campaign"]
+    end
+    subgraph CENTRAL["WAZUH-MANAGER: 172.29.70.10"]
+        M["Wazuh manager 4.14.7<br/>Decode, match and correlate"]
+        ALERTS[("alerts.json")]
+        F["Filebeat"]
+        IDX[("Wazuh indexer<br/>wazuh-alerts-*")]
+        WD["Native Wazuh dashboard<br/>HTTPS 443"]
+        POLL["Temporary Python status script<br/>Health, alert sample and scoring"]
+    end
+    AIT["AIT public alert dataset"]
+    SYN["Synthetic inputs<br/>Pipeline checks"]
+    GAP["PENDING<br/>Campaign-to-alert exporter"]:::pending
+    USER --> LAUNCH --> API
+    API -->|serves page and JSON| UI
+    UI -->|token-bearing requests| API
+    API -->|power and resource commands| HV
+    HV -.->|hosts| WIN
+    HV -.->|hosts| LIN
+    HV -.->|hosts| CENTRAL
+    API -->|PowerShell Direct| WR --> WE --> WA
+    API -->|SSH and restricted sudo| LR --> LE --> LA
+    WA -->|TCP 1514| M
+    LA -->|TCP 1514| M
+    MITRE -.->|rule mappings| M
+    M --> ALERTS --> F -->|HTTPS 9200 inside manager VM| IDX
+    IDX -->|search results| WD --> USER
+    API -->|SSH 22: encoded script| POLL
+    ALERTS --> POLL -->|status JSON| API
+    AIT --> OFF
+    SYN --> OFF
+    OFF --> MODEL -.->|loaded at dashboard startup| API
+    OFF --> REPORTS
+    API -->|findings PDF| REPORTS
+    LR -->|labels and markers| GAP
+    IDX -.->|matching alerts required| GAP -.->|future lab episodes| OFF
+    classDef pending fill:#fff3db,stroke:#a66516,color:#533600
+    classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29
+    class MODEL,REPORTS,ALERTS,IDX store

@@ -1,0 +1,44 @@
+flowchart LR
+    IN["Authenticated agent event stream"]
+    DEC["Wazuh decoder and rule pipeline"]
+    subgraph WINDOWS["Windows rules"]
+        B4625["Vendor 60122<br/>Event 4625"]
+        SEEDW["100100, level 3<br/>Bad-password subStatus 0xc000006a<br/>Nonempty target account"]
+        CORRW["100101, level 10<br/>Six in 120 seconds<br/>Same target user and domain"]
+        BWUSER["Vendor 60109<br/>Enabled or created account"]
+        RWUSER["100102, level 6<br/>Filter event 4720 only"]
+        BWTASK["Vendor 60228<br/>Task creation"]
+        RWTASK["100103, level 6"]
+    end
+    subgraph LINUX["Linux rules"]
+        BSSH["Vendor 5760<br/>Failed password"]
+        SEEDL["100110, level 3<br/>Known account password failure"]
+        CORRL["100111, level 10<br/>Six in 120 seconds<br/>Same user and source IP"]
+        BLUSER["Vendor 5902<br/>useradd new user"]
+        RLUSER["100112, level 6"]
+        BFIM["Vendor 550 or 554<br/>File changed or added"]
+        RLFIM["100113, level 6<br/>Cron-path filter"]
+    end
+    MAP["ATT&CK enrichment<br/>IDs, tactics and techniques"]
+    ALOG[("Manager alerts.json<br/>Timestamp, agent, rule, decoded fields")]
+    FB["Filebeat Wazuh module"]
+    INDEX[("wazuh-alerts-* indices")]
+    VIEW["Native dashboard<br/>Threat Hunting, Discover and ATT&CK"]
+    IN --> DEC
+    DEC --> B4625 --> SEEDW --> CORRW
+    DEC --> BWUSER --> RWUSER
+    DEC --> BWTASK --> RWTASK
+    DEC --> BSSH --> SEEDL --> CORRL
+    DEC --> BLUSER --> RLUSER
+    DEC --> BFIM --> RLFIM
+    CORRW -->|T1110.001| MAP
+    CORRL -->|T1110.001| MAP
+    RWUSER -->|T1136.001| MAP
+    RLUSER -->|T1136.001| MAP
+    RWTASK -->|T1053.005| MAP
+    RLFIM -->|T1053.003| MAP
+    SEEDW -->|below threshold: base alert| ALOG
+    SEEDL -->|below threshold: base alert| ALOG
+    MAP --> ALOG --> FB --> INDEX --> VIEW
+    classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29
+    class ALOG,INDEX store

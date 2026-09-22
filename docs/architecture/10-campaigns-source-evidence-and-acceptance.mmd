@@ -1,0 +1,32 @@
+flowchart LR
+    MANUAL["Individual scenario action<br/>Windows or Linux"]
+    CAM["run-campaign.sh<br/>Linux only, default 14 hours"]
+    PLAN["Episode plan and label<br/>Administrative or attack-like script intent"]
+    STAFF["Three standing staff accounts<br/>Background PAM sessions"]
+    DRIVER["Scenario driver<br/>Markers, timestamps and cleanup"]
+    SOURCE[("Guest source evidence<br/>Event XML, auth log, cron content, audit")]
+    RUN[("run.json<br/>Scenario, endpoint, marker and result<br/>indexedDetection remains not_checked")]
+    LABELS[("campaign.jsonl / activity.jsonl<br/>Episode IDs, labels and run linkage")]
+    SYNC["Sync-LabCampaign.ps1<br/>SSH/SCP watch loop"]
+    LOCAL[("Host evidence/campaigns<br/>Copied campaign records")]
+    WAZUH["Real Wazuh detection pipeline"]
+    INDEX[("Indexed alerts with endpoint<br/>Rule, ATT&CK, time and marker")]
+    REVIEW["Acceptance review<br/>Match source, run and indexed alert"]
+    PASS["Per-case evidence package<br/>Two positive runs plus comparisons"]
+    JOIN["PENDING exporter<br/>Join campaign labels to actual alerts<br/>Validate time, markers and completeness"]:::pending
+    EP[("Future lab episodes.jsonl")]
+    MANUAL --> DRIVER
+    CAM --> PLAN --> DRIVER
+    CAM --> STAFF --> WAZUH
+    DRIVER --> SOURCE
+    DRIVER --> RUN
+    SOURCE --> WAZUH --> INDEX
+    RUN --> LABELS --> SYNC --> LOCAL
+    SOURCE --> REVIEW
+    RUN --> REVIEW
+    INDEX --> REVIEW --> PASS
+    LOCAL -.-> JOIN
+    INDEX -.-> JOIN -.-> EP
+    classDef pending fill:#fff3db,stroke:#a66516,color:#533600
+    classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29
+    class SOURCE,RUN,LABELS,LOCAL,INDEX,EP store

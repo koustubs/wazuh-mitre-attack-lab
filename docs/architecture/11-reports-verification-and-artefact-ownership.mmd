@@ -1,0 +1,27 @@
+flowchart LR
+    PROPOSAL["Steps 1 to 3<br/>Context, scope, design and PlantUML"]
+    PP[("Wazuh-Threat-Detection-Proposal.pdf<br/>Historical submitted design")]
+    RULES["lab_rules.xml and scenario drivers"]
+    ENGINE["test_rules.py<br/>Real rule engine, synthetic inputs<br/>Positive controls per platform"]
+    RULEOUT[("rule-checks.json<br/>Pass, fail or error")]
+    LIVE["Live endpoint runs<br/>Source and indexed evidence"]
+    VALID[("validation-status.md<br/>Sanitized acceptance summary")]
+    SCORE["Dashboard status script<br/>score.py and model.json"]
+    TEST["test_dashboard_scoring.py<br/>Fabricated alert files<br/>Substituted manager script"]
+    FOLDS[("AIT folds and model provenance")]
+    BUILD["build-report.py<br/>Measurements to figures and HTML"]
+    PRINT["Build-Report.ps1<br/>Headless Edge print"]
+    MODELPDF[("Detection-Modelling-Report.pdf")]
+    FIND["Current cached dashboard findings"]
+    EXPORT["Export-LabFindings<br/>Escaped HTML, explanation and rules"]
+    EDGE["Headless Edge<br/>Temporary profile and staged PDF"]
+    FINDPDF[("evidence/findings/findings-TIMESTAMP.pdf")]
+    PROPOSAL --> PP
+    RULES --> ENGINE --> RULEOUT --> VALID
+    LIVE --> VALID
+    SCORE --> TEST
+    FOLDS --> BUILD --> PRINT --> MODELPDF
+    SCORE --> BUILD
+    FIND --> EXPORT --> EDGE --> FINDPDF
+    classDef store fill:#e7f2eb,stroke:#487b60,color:#173b29
+    class PP,RULEOUT,VALID,FOLDS,MODELPDF,FINDPDF store
