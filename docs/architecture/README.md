@@ -1,6 +1,6 @@
 # Wazuh lab: complete project architecture
 
-**Implementation snapshot: 22 September 2026.** This describes the repository at `e46fe8e` and the deployment recorded in the handoff. It does not claim a fresh live verification. The diagrams include the original detection lab, the Windows control dashboard, the modelling extension, and the paths that remain unfinished.
+**Implementation snapshot: 22 September 2026.** This describes the repository at `e46fe8e` and the deployment recorded in the project documentation. It does not claim a fresh live verification. The diagrams include the original detection lab, the Windows control dashboard, the modelling extension, and the paths that remain unfinished.
 
 Open [Wazuh-Project-Architecture.html](Wazuh-Project-Architecture.html) to switch between diagrams, zoom, pan and download SVG or Mermaid source. It is also the file to send: every diagram, style, control and download is embedded, so it needs nothing else to open on another machine. Each diagram below is editable Mermaid. The numbered `.mmd` and `.svg` files are standalone copies generated from this document, and the `.mmd` files are the editable source the rest is rendered from.
 
