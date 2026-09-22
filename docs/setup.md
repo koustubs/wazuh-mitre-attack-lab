@@ -13,7 +13,7 @@ move the lab onto a different network.
 | | lean | full |
 | --- | --- | --- |
 | Host RAM | 8 GB | 16 GB |
-| Free disk | 60 GB | 160 GB |
+| Free disk | 60 GB | 180 GB |
 | Guests | manager, Linux endpoint | plus the Windows endpoint |
 | Detection cases | 3 of 6, Linux only | 6 of 6 |
 | Images you supply | none | a Windows 11 ISO |
@@ -255,8 +255,8 @@ browser, and that is where the lab is started, watched and stopped from. It asks
 once at launch, because the hypervisor will not report VM state otherwise.
 
 The page runs the same preflight as step 0 before it opens, so anything blocking is named along
-with the command that fixes it. It also shows the logins for the Wazuh web interface and all
-three guests, with the passwords masked until asked for.
+with the command that fixes it. It also shows the logins for the Wazuh web interface and for
+every guest in the profile, with the passwords masked until asked for.
 
 "Bring the lab up" starts the manager, waits for it to boot and for the four Wazuh services to
 come up, then starts the endpoints and waits for the agents to check in. "Take the lab down"

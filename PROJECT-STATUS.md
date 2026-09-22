@@ -62,21 +62,27 @@ Six cases in total, one per scenario per operating system.
 
 ## 4. The lab as it stands
 
-Three Hyper-V VMs on an internal switch with NAT. Everything was provisioned unattended.
+Two or three VMs on a private network with outbound NAT and no route in, depending on the
+profile. Everything is provisioned unattended, on Hyper-V or on VirtualBox.
 
-| VM | Guest hostname | Address | Role |
-| --- | --- | --- | --- |
-| WAZUH-MANAGER | `wazuh-manager` | 172.29.70.10 | Wazuh manager, indexer, dashboard, all 4.14.7 |
-| WAZUH-WIN | `WAZUH-WIN` | 172.29.70.20 | Windows 11 Pro, agent 001 |
-| WAZUH-LINUX | `wazuh-linux` | 172.29.70.30 | Ubuntu 24.04.5, agent 002 |
+| VM | Guest hostname | Address | Role | Profile |
+| --- | --- | --- | --- | --- |
+| WAZUH-MANAGER | `wazuh-manager` | 172.29.70.10 | Wazuh manager, indexer, dashboard, all 4.14.7 | both |
+| WAZUH-WIN | `WAZUH-WIN` | 172.29.70.20 | Windows 11, agent 001 | full |
+| WAZUH-LINUX | `wazuh-linux` | 172.29.70.30 | Ubuntu 24.04 cloud image, agent 002 | both |
+
+Every value in that table comes from `lab.config.json`, which is the one place the addresses,
+names, memory, disk sizes, image URLs and the Wazuh version are written down. The running lab
+was built on Hyper-V at the full profile.
 
 Host is the gateway at 172.29.70.1. There is no DHCP on the switch, so all addresses are static
 and the guest hostnames must match exactly. Every script checks its hostname and refuses to run
 on the wrong machine, so a mismatch fails loudly rather than silently doing the wrong thing.
 
-**Access.** SSH to the two Ubuntu machines as `labadmin` using the key in
-`.lab-secrets/lab_ed25519`. Windows has no SSH; use Hyper-V PowerShell
-Direct from an elevated host session, which needs no network at all.
+**Access.** SSH as `labadmin` using the key in `.lab-secrets/lab_ed25519`, to all three. The
+Windows endpoint runs OpenSSH Server, installed by its unattend file and firewalled to the host
+address, which replaced Hyper-V PowerShell Direct. That transport worked only on Hyper-V, and
+one way in has to serve both backends.
 
 **Credentials** live in `.lab-secrets/`, which is gitignored. It holds the
 SSH keypair, a random 20 character console password, and the three unattended install images.
@@ -84,9 +90,9 @@ The Wazuh dashboard admin password is not stored there; it is in
 `/root/wazuh-lab-install/install.log` on the manager.
 
 **Firewall.** `install-manager.sh` restricts the manager with ufw, before the platform is
-started: SSH and 443 only from the
-host, and 1514 only from the two endpoint addresses. The dashboard is deliberately not reachable
-from anywhere except the host.
+started: SSH and 443 only from the host, and 1514 only from the endpoint addresses in
+`lab.config.json`. The Wazuh web interface is deliberately not reachable from anywhere except
+the host.
 
 ---
 
@@ -155,31 +161,34 @@ Each network held out in turn, trained on the other seven:
 
 | | f1 | average precision |
 | --- | --- | --- |
-| best single Wazuh rule | 0.245 (sd 0.134) | 0.161 (sd 0.092) |
-| logistic on shape and severity, deployed | 0.192 (sd 0.107) | 0.177 (sd 0.080) |
-| GRU over the alert sequence | 0.180 (sd 0.112) | 0.199 (sd 0.081) |
-| logistic regression on counts and timing | **0.292** (sd 0.121) | **0.249** (sd 0.097) |
+| best single Wazuh rule | 0.235 (sd 0.148) | 0.160 (sd 0.098) |
+| GRU over the alert sequence | 0.164 (sd 0.123) | 0.188 (sd 0.085) |
+| logistic on shape and severity, deployed | 0.227 (sd 0.114) | 0.220 (sd 0.099) |
+| logistic regression on counts and timing | **0.251** (sd 0.154) | **0.251** (sd 0.108) |
 | random | | 0.021, the base rate |
 
-**Logistic regression wins all eight folds. The GRU wins none, mean margin -0.049.** A sequence
-model is not justified for this problem on this evidence.
+**The GRU loses to logistic regression on seven of eight folds, mean margin 0.063 with a spread
+of 0.048 on it.** A sequence model is not justified for this problem on this evidence, and that
+is the one comparison here consistent enough to say so.
 
 Four things that should be read with it:
 
-- **The winner cannot be deployed here, and the second row is what was.** The full feature set
-  is one column per AIT rule id, and this lab shares two signatures with AIT out of thirty one,
-  so on live lab alerts it would put everything in the unknown column. The deployed model drops
+- **The full feature set cannot be deployed here, and the deployed row is what runs.** It is
+  one column per AIT rule id, and this lab shares two signatures with AIT out of thirty one, so
+  on live lab alerts it would put everything in the unknown column. The deployed model drops
   every rule count and keeps eleven columns describing the shape and severity of a window. It
-  holds 71% of the full model and still beats the best single rule. The 0.072 it gives up is the
-  measured price of portability, and that the price is that high says most of the signal was in
-  which rules fired rather than in the shape of the burst.
-- **Nothing here is deployable as an alerting rule.** On its best fold, wheeler, 1,166 windows
-  holding 16 attack windows, the winner keeps perfect precision down to recall 0.375: six caught
-  and nothing false. Pushed to catch half, precision falls to 0.063, so eight real attacks arrive
-  with 119 false positives. That is what a 2% base rate does, and it is the honest state of the
+  holds 88% of the full model, beats the best single rule on all eight folds, and is ahead of
+  the full model on three of them. The 0.031 it gives up has a 0.035 spread across folds, so
+  the price of portability is smaller than the noise on it. That inverts what this section said
+  before the sampling was corrected: rule identity was worth far less than the 256-alert cap
+  made it look.
+- **Nothing here is deployable as an alerting rule.** On its best fold, wheeler, 1,181 windows
+  holding 15 attack windows, the winner keeps perfect precision down to recall 0.400: six caught
+  and nothing false. Pushed to catch half, precision falls to 0.031, so eight real attacks arrive
+  with 246 false positives. That is what a 2% base rate does, and it is the honest state of the
   art here rather than a failure of the modelling.
 - **The synthetic results were measuring the generator.** On `make-synthetic.py` output every
-  model scored near the ceiling, logistic at f1 1.000. The same model scores 0.249 average
+  model scored near the ceiling, logistic at f1 1.000. The same model scores 0.251 average
   precision on real alerts. Synthetic numbers in this repo are evidence the code runs, nothing
   more, and the modelling README says so.
 - **This does not test the lab's own rules.** No public dataset contains 100100 to 100113;
@@ -189,8 +198,8 @@ Four things that should be read with it:
   built and proven.
 
 The deployed model runs inside the dashboard's existing SSH poll, scoring the last twelve five
-minute windows on every cycle at 4 ms for a full 800 record sample, with nothing installed on
-the manager. `scoring/export-model.py` writes the eight fold result into the
+minute windows on every cycle. 8 ms for a full 5,000 document indexer search spread across
+eighteen windows, in plain Python, with nothing installed on the manager. `scoring/export-model.py` writes the eight fold result into the
 model file itself, and the panel prints it, because a weights file with no measurement attached
 gets trusted more than it has earned. The panel also states permanently that the model has
 never been measured on this lab.
@@ -256,8 +265,11 @@ VMs now have automatic checkpoints disabled.
 
 **Windows Setup has no safe key to press.** Both Enter and Escape activate Cancel and open a quit
 dialog, and keystrokes buffer while firmware loads, so keys sent early all land at once when the
-UI appears. Send exactly one key for the "press any key to boot" prompt and then stop. This is
-recorded in `host/LabConsole.ps1`.
+UI appears. Send exactly one key for the "press any key to boot" prompt and then stop. This was
+learned from `LabConsole.ps1`, a framebuffer console driver that typed at VM consoles over the
+Hyper-V WMI provider. It is gone: Ubuntu boots a cloud image and needs no console at all, and
+nothing else in the repository types at one. The note is kept because the next person to reach
+for that approach will hit the same thing.
 
 **Passing shell commands inline through PowerShell to ssh is unreliable.** Quotes and backslashes
 get mangled. One mangled `sed` expression silently corrupted scripts on the manager by stripping
@@ -319,6 +331,7 @@ wazuh-threat-detection/
     train.py                    embedding, GRU and linear head, in PyTorch
     evaluate.py                 leave one network out, across all eight
     evaluate_adaptive.py        the same eight folds against the per endpoint baseline layer
+    window-sensitivity.py       whether the result is the models, the window width or the split
     export-model.py             fits the portable model, with its measurement inside the file
     Sync-LabCampaign.ps1        pulls campaign records off the endpoint as they are written
     scorer/                     score.py and model.json, the part that leaves this machine
@@ -376,8 +389,9 @@ each step is a script that does one job and reports what it did.
 
 - The two frequency edge cases on the Windows rule 100101. They are done for the Linux rule
   100111, and the mechanism under test belongs to `wazuh-analysisd` and is shared by both, but
-  100101 keys on different fields and has not been exercised this way. The Windows endpoint is
-  reachable only through Hyper-V PowerShell Direct, which needs an elevated host session.
+  100101 keys on different fields and has not been exercised this way. The obstacle used to be
+  that the Windows endpoint was reachable only through Hyper-V PowerShell Direct; it now runs
+  OpenSSH like the Linux one, so nothing is in the way except doing it.
 - All timings were measured on an idle lab. Behaviour under sustained load is unknown.
 - The rule set covers three behaviours by design. Coverage claims should stay limited to the six
   cases in the results table.
@@ -388,7 +402,7 @@ each step is a script that does one job and reports what it did.
   commit. No credential has ever been committed. `SECURITY.md` carries the checklist to run
   before making it public, including reading the mentor PDF, whose text cannot be scanned
   automatically.
-- `host/New-LabSecrets.ps1` creates the credentials. Nothing in the repository did, which meant a
+- `setup/New-LabSecrets.ps1` creates the credentials. Nothing in the repository did, which meant a
   clone stopped at step 2 with a confusing error, and the gap was invisible on the machine where
   the files already existed.
 - `Lab.cmd` opens the dashboard, which is now the front door: one button brings the lab up in the
@@ -418,13 +432,16 @@ With that fixed, S1 on WAZUH-LINUX: rule 100110 five times, then 100111 at level
 window climbed to 100 while the burst ran. It closed at 99.9, critical, with the chain
 multiplier applied because 100112 created a local account in the same window. Base 76.84,
 times 1.30. The 90 second window before it scored 54.2 on boot noise alone, which is a fair
-illustration of what a 0.177 average precision model is and is not worth. Findings export
+illustration of what a 0.220 average precision model is and is not worth. Findings export
 produced a three page PDF of both.
 
 **Still open:**
 
-- A single command from bare ISOs. The remaining manual steps are the GRUB edit for Ubuntu
-  autoinstall and the key transfer between manager and endpoints.
+- Windows still needs an ISO you supply. Ubuntu does not: `Get-LabImage.ps1` fetches the cloud
+  image and checks it against the published SHA256, and cloud-init configures the guest on first
+  boot, so there is nothing to type at a console. The agent key transfer is no longer manual
+  either; `Install-LabAgents.ps1` reads each key off the manager and enrols the endpoint with it.
+  What is left by design is the hypervisor, which you install yourself.
 - **The exporter.** `run-campaign.sh` records what it launched and when; nothing yet joins
   those runs to the alerts they caused in the indexer. Until it exists, a campaign produces
   labels without features and the lab's own rules stay untested in sequence. Alert retention
@@ -433,31 +450,40 @@ produced a three page PDF of both.
   on the host, varied failed-logon counts working on real hardware, staff rotation producing
   sessions. The full 14 hour run has not been made, and is now a specific question rather than
   a prerequisite for anything.
-- `run-campaign.sh` is not in the dashboard's sudoers grant, so starting a campaign from the
-  dashboard would prompt for a password. Everything else the dashboard needs is granted.
+**From an external review, 21 September 2026.** An outside pass over the repository found five
+code issues. All five are fixed, and the numbers in section 5b were recomputed afterwards
+rather than carried over. None of the fixes reversed the headline result that logistic
+regression beats the sequence model.
 
-**From an external review, 21 September 2026.** An outside pass over the repository found
-five code issues that have not been fixed. None of them reverses the headline result that
-logistic regression beats the sequence model on all eight folds.
+- **Tied scores.** `scoring/features.py` ranked equal scores by input order, so a binary
+  single-rule score got an average precision that depended on the order the rows arrived in.
+  It now cuts the precision-recall curve only where the score changes, which is the standard
+  definition and identical to the old arithmetic when nothing is tied. Every figure derived
+  from that column was recomputed.
+- **The validation claim.** `scoring/evaluate.py` described a whole-network validation holdout
+  and took an 85% row cut, which, because the rows are sorted by source, was the back end of
+  whichever network sorted last. It now holds out a whole network, rotated so each one
+  validates exactly once, and standardisation, vocabulary and weights are all fitted on the
+  inner split alone.
+- **Truncation.** `Start-LabDashboard.ps1` read at most the last 400 KB and 800 records of the
+  alert log, so a busy window lost its oldest records and was still treated as complete. It
+  now reads the indexer over an explicit time range, keeps the log tail only as a fallback,
+  and says which source it used.
+- **The chain multiplier.** `scorer/score.py` treated credential access and persistence
+  anywhere in the same window as a chain, and the dashboard dropped endpoint identity while
+  bucketing, so activity on two unrelated endpoints earned the same multiplier. Alerts are now
+  bucketed per endpoint and the chain is evaluated inside one.
+- **Sampling.** `import-ait.py` anchored windows on the first capture event and kept 256 events
+  per window, where live scoring uses epoch boundaries. Windows are now anchored on the epoch
+  the same way, and the cap is 4096, which is where the live side runs out anyway. The old cap
+  bound a fifth of the attack windows, so the count feature was saturating on exactly the
+  windows whose size was the signal.
 
-- `scoring/features.py` ranks equal scores by input order, so a binary
-  single-rule score gets an order-dependent average precision. Grouping ties gives about
-  0.1645 for the single-rule baseline against the stored 0.1608. Every figure derived from
-  that column should be recomputed.
-- `scoring/evaluate.py` describes a whole-network validation holdout but takes
-  an 85% row cut, which splits a network in all eight folds, and standardisation is fitted
-  before that inner split. The outer test networks are still separate, so this is not label
-  leakage into the test set, but the validation independence claim is wrong as written.
-- `Start-LabDashboard.ps1` reads at most the last 400 KB and 800 records, so the oldest bucket
-  can be truncated and still treated as complete, and the newest alert decides which bucket is
-  partial, so a quiet completed window never closes until another alert arrives.
-- `scorer/score.py` treats credential access and persistence anywhere in the same window as a
-  chain, and the dashboard drops endpoint identity while bucketing, so unrelated activity on
-  two different endpoints earns the same multiplier. Either describe it as co-occurrence or
-  implement the temporal and identity relationship.
-- `import-ait.py` anchors windows to the first capture event and keeps at most 256 events per
-  window, while live scoring uses epoch boundaries and a global tail limit. Training and live
-  features are therefore not sampled the same way.
+Fixing the last one surfaced a sixth defect the review did not find. `score.py` divided the
+model probability by `2 * threshold`, and with the deployed threshold of 0.85 that divisor was
+1.70. A probability cannot exceed 1, so the highest-weighted of the six components could never
+reach more than 0.59 of its range: the model contributed at most 16 points of 100 however
+certain it was. The divisor is now capped at 1.
 
 **Housekeeping:**
 

@@ -84,26 +84,26 @@ The scorer does not feed alerts back into Wazuh, retrain itself, or trigger auto
 
 ```mermaid
 flowchart TB
-    INTERNET["Internet<br/>Vendor packages, OS media, public dataset"]
-    subgraph HOST["Windows 11 Pro host"]
+    INTERNET["Internet<br/>Vendor packages, Ubuntu cloud image, public dataset"]
+    subgraph HOST["Windows host: 10 21H2 or 11"]
         BROWSER["Local browser"]
         HOSTAPI["Local dashboard server<br/>127.0.0.1:8077"]
-        ADMIN["Elevated PowerShell<br/>Hyper-V or VirtualBox backend module"]
-        DISKS[("D:/Wazuh-Lab<br/>VM configuration and virtual disks")]
-        GW["vEthernet Wazuh-Lab<br/>172.29.70.1/24"]
-        NAT["WinNAT<br/>Outbound connectivity"]
-        SW["Internal switch: Wazuh-Lab<br/>Static addressing, no DHCP"]
+        ADMIN["PowerShell, elevated<br/>Hyper-V or VirtualBox backend module"]
+        DISKS[("storageRoot from lab.config.json<br/>VM configuration, virtual disks, images")]
+        GW["Host address on the lab network<br/>172.29.70.1/24"]
+        NAT["Hyper-V: WinNAT<br/>VirtualBox: NAT network<br/>Outbound only"]
+        SW["Hyper-V: internal switch Wazuh-Lab<br/>VirtualBox: host-only adapter<br/>Static addressing, no DHCP"]
     end
-    subgraph MVM["Manager VM: Ubuntu 24.04 amd64"]
+    subgraph MVM["Manager VM: Ubuntu 24.04 cloud image"]
         FW["ufw<br/>Default deny inbound"]
-        MS["172.29.70.10<br/>4 vCPU / 8 GiB / 80 GiB disk"]
+        MS["172.29.70.10<br/>full 4 vCPU / 6 GiB / 60 GiB<br/>lean 2 vCPU / 4 GiB / 32 GiB"]
         SSH["sshd: TCP 22"]
         WEB["Wazuh dashboard: HTTPS 443"]
         EVENTS["Agent event receiver: TCP 1514"]
         LOCAL["Internal services<br/>Indexer 9200 and manager API 55000"]
     end
-    WVM["Windows 11 Pro VM<br/>172.29.70.20<br/>4 vCPU / 6 GiB / 80 GiB disk<br/>Secure Boot and virtual TPM"]
-    LVM["Ubuntu 24.04.5 VM<br/>172.29.70.30<br/>2 vCPU / 2 GiB / 24 GiB disk<br/>SSH 22 for administration"]
+    WVM["Windows 11 VM: full profile only<br/>172.29.70.20<br/>2 vCPU / 4 GiB / 64 GiB<br/>Secure Boot and virtual TPM<br/>OpenSSH Server, host only"]
+    LVM["Ubuntu 24.04 VM: cloud image<br/>172.29.70.30<br/>full 2 vCPU / 1.5 GiB / 20 GiB<br/>lean 1 vCPU / 1 GiB / 16 GiB<br/>SSH 22 for administration"]
     BROWSER --> HOSTAPI
     HOSTAPI --> ADMIN
     ADMIN -->|VM operations| MS
@@ -133,11 +133,11 @@ flowchart TB
 | Filebeat and dashboard to indexer | HTTPS TCP 9200 within manager VM | Index writes and search queries. No host/endpoint firewall allowance is configured. |
 | Wazuh dashboard to manager API | HTTPS TCP 55000 within manager VM | Wazuh application and agent-management data. |
 | Host to Linux endpoint | SSH TCP 22 | Scenario wrapper, service actions and campaign-record synchronization. The agent installer does not itself impose a host-only SSH firewall on this guest. |
-| Host to Windows guest | PowerShell Direct over Hyper-V | Scenario execution without a guest SSH or WinRM listener. |
+| Host to Windows guest | SSH TCP 22 | Scenario execution, agent enrolment and file transfer. OpenSSH Server is installed from the unattend file and its firewall rule is scoped to the host address. PowerShell Direct is gone: it worked only on Hyper-V, and one transport has to serve both backends. |
 | Linux S1 client to temporary sshd | TCP 22222 on guest loopback | Generates real failed SSH logins. The temporary daemon is not bound to the lab network. |
 | Guests to package repositories | Outbound HTTPS via NAT | Installation and updates. Seed DNS addresses are `1.1.1.1` and `8.8.8.8`. |
 
-The VM allocation is 16 GiB fixed RAM in total. The provisioner requires at least 220 GiB free space. `AutomaticStartAction` is `Nothing`, `AutomaticStopAction` is `ShutDown`, and dynamic memory is disabled. The existing deployment reportedly had automatic checkpoints disabled later; `New-Lab.ps1` does not explicitly reproduce that setting. Disk-chain cleanup is separate from ordinary shutdown.
+Every number here comes from `lab.config.json` and is summed at run time rather than written down twice. The full profile starts 11.5 GiB of memory across three VMs and can grow to 16 GiB; the lean profile starts 5 GiB across two and can grow to 8 GiB. Memory is dynamic on Hyper-V, with a per-VM floor that keeps the manager's services up, so an idle guest hands its pages back; VirtualBox has no equivalent and takes what it is given. The free-space gate is the sum of the profile's disks plus a quarter, which is 180 GB for the full profile and 60 GB for the lean one, and `Get-LabImage.ps1` wants about 36 GB more while it unpacks the cloud image. `AutomaticStartAction` is `Nothing` and `AutomaticStopAction` is `ShutDown` on every VM, set at creation and again by the dashboard's start path, which has no code that can write any other autostart value. Checkpoints are standard rather than production, so nothing builds a differencing chain behind an ordinary shutdown.
 
 ## 3. Provisioning and configuration dependencies
 
@@ -426,9 +426,9 @@ The sequence is request-driven, not a permanently running scheduler. Pausing/can
 | Manager | `labadmin` joins `wazuh` to read alerts and manager logs | `agent_control -l`; start/stop/restart of `wazuh-manager`, `wazuh-indexer`, `wazuh-dashboard`, `filebeat`. |
 | Manager | Indexer health, document totals, size and retention state | `/usr/local/bin/lab-dashboard-indexer`, using local indexer admin certificate files. |
 | Manager | Wazuh dashboard access details on explicit request | `/usr/local/bin/lab-dashboard-creds`, reading the root-owned installer log. |
-| Linux endpoint | `labadmin` joins `wazuh` | Agent service control and six exact `lab-scenario` invocations. |
+| Linux endpoint | `labadmin` joins `wazuh` | Agent service control, six exact `lab-scenario` invocations and three `lab-campaign` verbs. |
 
-The installed scenario wrapper calls `/usr/local/lib/wazuh-lab/invoke-scenario.sh`. Sudoers content is validated with `visudo` before installation. The campaign runner is not included in that grant. Windows scenario jobs read the local console credential when invoked and run through PowerShell Direct.
+The installed scenario wrapper calls `/usr/local/lib/wazuh-lab/invoke-scenario.sh`. Sudoers content is validated with `visudo -c -f` before installation, so a malformed file is never written. `lab-campaign` is granted alongside it as three named verbs, `start *`, `stop` and `status`, rather than as a path with a wildcard argument list; the wrapper itself refuses anything but a whole number of hours. Windows scenario jobs read the local console credential when invoked and reach the guest over SSH.
 
 Current transport caveats belong in the architecture: several administration helpers disable SSH host-key verification and do not retain known hosts; dashboard/indexer helper queries use `curl -k`. These are existing lab choices, not a claim of fully verified server identity. Credential values are deliberately excluded from these diagrams.
 
@@ -474,7 +474,7 @@ flowchart LR
     class CACHE,EPS,FOLDS,PT,MODEL store
 ```
 
-The saved public-data run contains 2,600,263 raw alerts, 8,915 episodes and 187 attack-labelled episodes. An episode is labelled by overlap with a ground-truth phase; this does not mean every alert inside it is malicious. Public data evaluates a method on different rules, not these six custom detections.
+The saved public-data run parses 2,600,263 raw alerts into 8,932 five-minute windows, 188 of them attack-labelled, keeping 1,007,412 alerts after the per-window cap. That cap is 4,096 and it binds 26 windows, every one of them attack-labelled: the AIT scenarios contain flood phases above a hundred thousand alerts in five minutes, and those 26 windows alone hold 1.70M of the 2.60M. The cap is set against the live ceiling rather than against this data, because one indexer search returns at most 5,000 documents and a training window must not claim a count the panel could never produce. An episode is labelled by overlap with a ground-truth phase; this does not mean every alert inside it is malicious. Public data evaluates a method on different rules, not these six custom detections.
 
 Model mechanics:
 
@@ -482,10 +482,10 @@ Model mechanics:
 - **Full logistic:** per-rule counts, unknown count and six volume/timing values; standardized inputs, NumPy batch gradient descent, logistic loss and L2 regularization. Defaults are 3,000 fitting iterations, learning rate 0.15 and L2 0.001.
 - **Portable logistic:** eleven aggregate features, with no per-rule count columns. This is the deployed scorer; the full logistic and GRU remain offline comparisons.
 - **GRU:** 16-dimensional rule embedding plus one gap feature, a 32-unit GRU, dropout 0.2 and a linear two-class head. Training uses class-weighted cross entropy and Adam. The eight-fold evaluator defaults to maximum sequence length 128, batch size 256, 60 epochs, learning rate 0.003 and three seeds. `train.py` has separate defaults and writes the `.pt` checkpoint.
-- **Evaluation:** each outer test network is excluded from model fitting. Inside the remaining networks, current evaluation uses an 85% row split for validation, even though comments describe a complete-network holdout. Scaling precedes that inner split. AP currently mishandles tied scores. These are known correctness issues, not guarantees made by this diagram.
-- **Export:** the exported portable model uses seven complete networks for fitting and Wilson for threshold selection. It checks feature parity before writing the model, and embeds the saved eight-fold measurements. Correcting evaluation requires refreshing those cached measurements and the exported provenance.
+- **Evaluation:** each outer test network is excluded from model fitting, and inside the remaining seven one whole network is held back for thresholds and early stopping, rotated so each validates exactly once. Standardization, vocabulary and weights are fitted on the inner split alone. Average precision cuts the curve only where the score changes, so tied scores no longer make the number depend on row order. All three of those were defects found in review and corrected; every figure downstream was recomputed rather than carried over.
+- **Export:** the exported portable model uses seven complete networks for fitting and Wilson for threshold selection. It checks feature parity before writing the model, refuses to write if `score.py` and `features.py` disagree, and embeds the saved eight-fold measurements alongside the adaptive layer's own measured comparison.
 
-The model output is a supervised logistic score for the experiment's attack label. It is not an independently calibrated probability of compromise, a learned per-user baseline, or proof that an event is unusual in this lab.
+The model output is a supervised logistic score for the experiment's attack label. It is not an independently calibrated probability of compromise, and it is not proof that an event is unusual in this lab. What each endpoint normally does is a separate thing, learned on the manager rather than here, and it scales the severity rather than the probability: diagram 9 is where that lives.
 
 ## 9. Manager-side scoring and severity calculation
 
@@ -699,7 +699,7 @@ The report builder uses saved measurement artefacts and a generated `figures.jso
 | Manager `/var/ossec/logs/` | Alert stream and manager logs. | Guest operational data. |
 | Manager `/etc/wazuh-indexer/certs/` | Indexer certificates and helper client credentials. | Guest private configuration. |
 | Manager `/var/lib/wazuh-lab/` | Per-endpoint baseline: what each one normally does, folded one completed window at a time. | Guest operational state. |
-| Manager `/usr/local/bin/lab-dashboard-*` | Root-owned helpers the dashboard is granted by exact path: agent list, indexer search, baseline, credentials. | Guest operational tooling. |
+| Manager `/usr/local/bin/lab-dashboard-*` | Root-owned helpers the dashboard is granted by exact path: indexer search, baseline, credentials. | Guest operational tooling. |
 | Manager `/root/wazuh-lab-install/` | Vendor installation artefacts and credential-bearing log. | Guest private setup data. |
 | Windows `%ProgramData%/WazuhLab/` | Audit/config backups and per-run source evidence. | Guest local evidence. |
 | Linux `/var/log/wazuh-lab/` | Setup logs, per-run evidence and campaign records. | Guest local evidence. |

@@ -131,3 +131,10 @@ looking at when judging whether a model learned anything beyond counting.
 
 The other honest limit is that this is one host with three standing accounts and three scenario
 shapes. It is enough to build and measure a pipeline against. It is not a sample of the world.
+
+One thing has moved since this was written. The manager now keeps a per-endpoint baseline of
+its own, folded one completed window at a time as the dashboard polls, and scores each endpoint
+against it. That is not what this document meant by a baseline of normal per user: it is per
+machine, it is built from whatever the lab happens to do, and it knows nothing about which
+account produced an alert. The three standing accounts in a campaign are still the only route
+to the per-account version, and nothing reads them apart yet.

@@ -10,23 +10,28 @@ Open it with `Lab.cmd` at the root of the repository. This is not how the lab ge
 ## Before it opens
 
 The page starts as a small box that checks the machine, and hands over to the dashboard only once
-nothing is blocking. Ten reads, none of which change anything:
+nothing is blocking. Ten reads, none of which change anything. They are the same checks
+`setup\Test-LabHost.ps1` runs, from the same module, so the two cannot drift apart:
 
 | Check | Why it is here |
 | --- | --- |
-| Administrator rights | Hyper-V does not answer an ordinary session. |
-| Hardware virtualization | SVM on AMD, VT-x on Intel. Off in firmware, and no VM starts at all. |
-| Hyper-V platform | The management service, which is the honest test that the platform is live. |
-| Lab network | The `Wazuh-Lab` switch, and a NAT covering 172.29.70.0/24. |
-| Lab virtual machines | All three present, under the names this tool expects. |
+| Administrator rights | A hypervisor does not answer an ordinary session, so nothing below can be read. |
+| Hardware virtualization | Named as your CPU vendor names it: SVM on AMD, VT-x on Intel. Off in firmware, and no VM starts at all. |
+| Hypervisor | The backend `lab.config.json` selects. If it is missing and the other one is installed, it says so and names the one-word change. |
+| Lab network | The switch and the NAT, or on VirtualBox the host-only adapter, covering the configured subnet. |
+| Lab virtual machines | The VMs the active profile calls for, under the names this tool expects. A missing Windows endpoint on the lean profile is not a failure. |
 | Lab credentials | `.lab-secrets`. A fresh clone has none, and this is where that surfaces. |
-| OpenSSH client | Everything read from inside the guests travels over SSH. |
-| Memory headroom | 16 GB for all three. Advisory. |
-| Disk headroom | On whichever drive the VMs are actually on. Advisory. |
-| Autostart locked off | 16 GB should never wake on its own. Advisory. |
+| OpenSSH client | Everything read from inside the guests travels over SSH, both guests. |
+| Memory headroom | Against the profile's own startup total, counting memory the lab is already holding. Advisory. |
+| Disk headroom | On the drive the VMs are on, or on `storageRoot` before they exist. Advisory. |
+| Autostart locked off | Nothing in this lab should wake on its own. Advisory. |
+| Package sources reachable | Whether the host can reach the vendor repositories a build needs. Advisory. |
 
-The first seven block. The last three warn instead: they say the lab will struggle rather than
+The first seven block. The last four warn instead: they say the lab will struggle rather than
 that it cannot start, so they cost one click rather than a fix.
+
+Every number they test comes from `lab.config.json`, so switching to the lean profile or moving
+the subnet changes what they ask for without anything here being edited.
 
 Everything passing opens the dashboard on its own, in about a second. Anything failing leaves the
 box where it is and names the cause and the command that fixes it, with "Check again" beside it.
@@ -49,7 +54,7 @@ The logins, in a panel under the host strip:
 | Wazuh web interface | `https://172.29.70.10`, user `admin` |
 | Manager | `labadmin@172.29.70.10`, key or console password |
 | Linux endpoint | `labadmin@172.29.70.30`, key or console password |
-| Windows endpoint | `labadmin`, at the Hyper-V console |
+| Windows endpoint | `labadmin@172.29.70.20`, key over SSH, or the console password at the VM |
 
 Addresses and usernames are always shown. Passwords arrive masked and stay masked until you press
 "Show passwords", and every value has a Copy button.
@@ -141,7 +146,7 @@ quiet hour look exactly like a bad one.
 What the panel is careful not to claim is the important part. The model was fitted on eight public
 networks, because no public dataset contains this lab's rules, and it has never been measured
 here. Its own measurement travels in the model file and is printed on the panel: average precision
-0.177 against a 0.021 base rate, on networks it had never seen. That is eight times better than
+0.220 against a 0.021 base rate, on networks it had never seen. That is ten times better than
 chance and well short of an alerting rule, so the panel is triage ordering and says as much.
 
 The model file is read from `scoring/scorer/` at startup and travels inside the
@@ -227,29 +232,36 @@ the manager.
 
 ## Why it asks for administrator
 
-Hyper-V will not report VM state to an ordinary session. Rather than failing halfway, the script
-relaunches itself elevated, so you get one UAC prompt at launch.
+Neither hypervisor reports VM state to an ordinary session. Rather than failing halfway, the
+script relaunches itself elevated, so you get one UAC prompt at launch.
 
 `-NoElevate` serves the page without it. The layout is all there but every VM reports "Needs
-administrator", because Hyper-V is refusing to answer.
+administrator", because the backend is refusing to answer.
 
 ## It will not start your VMs by itself
 
 Worth being precise, because it was a design requirement.
 
-`New-Lab.ps1` creates every VM with `-AutomaticStartAction Nothing`, so Hyper-V will not start them
-when the host boots, including if they were running when it shut down. The paired
-`-AutomaticStopAction ShutDown` means a host restart shuts the guests down cleanly.
+`New-Lab.ps1` creates every VM stopped, and neither backend will start one when the host boots,
+including one that was running when it shut down. On Hyper-V that is
+`-AutomaticStartAction Nothing`, set explicitly at creation, with the paired
+`-AutomaticStopAction ShutDown` so a host restart shuts the guests down cleanly. On VirtualBox
+there is nothing to set: a VM starts with the host only through the `VBoxAutostart` service,
+which this project never installs, so the backend reports `Nothing` and its lock function does
+nothing by design.
 
 The dashboard reinforces that rather than trusting it:
 
 - Each card shows its VM's live autostart setting and flags anything other than `Nothing`.
-- "Lock: never autostart" sets all three to `Nothing`. The only value this code can write is
-  `Nothing`; there is no path in it that enables automatic startup.
+- "Lock: never autostart" sets every VM in the profile back to `Nothing`. That is the only value
+  this code can write; there is no path in it that enables automatic startup.
 - Opening the page performs no action. Every change needs a click, including bringing the lab up.
 
-All three running is 16 GB of fixed allocation: 8 manager, 6 Windows, 2 Linux. Memory is not
-dynamic, so a running VM holds its full amount and an off VM holds none.
+The full profile starts 11.5 GB across three VMs and the lean profile 5 GB across two. On
+Hyper-V memory is dynamic between a per-VM floor and ceiling, so an idle guest hands its pages
+back and the three can grow to 16 GB between them under load. VirtualBox has no equivalent: a
+running VM there holds its startup allocation whatever it is doing. An off VM holds none on
+either.
 
 ## What the buttons do
 
@@ -305,9 +317,9 @@ that turned a 400 ms timeout into a 21 second stall. Probes also only run agains
 running, and are cached for 15 seconds, except during a sequence where the port coming up is the
 thing being waited on.
 
-**Health is gated on the SSH port probe, not on VM state.** Hyper-V reports Running the moment a
-VM is powered on, roughly a minute before sshd answers, so gating on state alone spent an eight
-second SSH timeout on every cycle of a cold boot.
+**Health is gated on the SSH port probe, not on VM state.** Both backends report Running the
+moment a VM is powered on, roughly a minute before sshd answers, so gating on state alone spent
+an eight second SSH timeout on every cycle of a cold boot.
 
 **`Start-Process -PassThru` does not cache the process handle.** Once the process exits there is
 nothing left to read an exit code from, so `ExitCode` comes back empty rather than 0, and

@@ -6,8 +6,9 @@ frequency rule edge cases are characterised. R1 to R5 are met.
 
 ## Results
 
-One Wazuh 4.14.7 manager and two enrolled agents, all on Hyper-V. Every alert below came from a
-real endpoint action, not a synthetic event.
+One Wazuh 4.14.7 manager and two enrolled agents, measured on Hyper-V. VirtualBox is a supported
+backend and none of these results have been re-measured on it. Every alert below came from a real
+endpoint action, not a synthetic event.
 
 | Case | Rule | Level | ATT&CK | Result |
 | --- | --- | --- | --- | --- |
@@ -241,8 +242,9 @@ days and is attached and enabled on the live index.
 
 - The same two edge cases on the Windows rule 100101. The mechanism under test belongs to
   `wazuh-analysisd` and is shared by both rules, but 100101 keys on different fields and has not
-  been exercised this way. The Windows endpoint is reachable only through Hyper-V PowerShell
-  Direct, which needs an elevated host session.
+  been exercised this way. The obstacle was that the Windows endpoint was reachable only through
+  Hyper-V PowerShell Direct; it now runs OpenSSH like the Linux one, so this is outstanding work
+  rather than a blocked path.
 - All timings were measured on an idle lab. Behaviour under sustained load is unknown.
 - The rule set covers three behaviours by design. Everything outside S1 to S3 is out of scope,
   and coverage claims should stay limited to what is in the results table above.

@@ -1,24 +1,24 @@
 flowchart TB
-    INTERNET["Internet<br/>Vendor packages, OS media, public dataset"]
-    subgraph HOST["Windows 11 Pro host"]
+    INTERNET["Internet<br/>Vendor packages, Ubuntu cloud image, public dataset"]
+    subgraph HOST["Windows host: 10 21H2 or 11"]
         BROWSER["Local browser"]
         HOSTAPI["Local dashboard server<br/>127.0.0.1:8077"]
-        ADMIN["Elevated PowerShell<br/>Hyper-V or VirtualBox backend module"]
-        DISKS[("D:/Wazuh-Lab<br/>VM configuration and virtual disks")]
-        GW["vEthernet Wazuh-Lab<br/>172.29.70.1/24"]
-        NAT["WinNAT<br/>Outbound connectivity"]
-        SW["Internal switch: Wazuh-Lab<br/>Static addressing, no DHCP"]
+        ADMIN["PowerShell, elevated<br/>Hyper-V or VirtualBox backend module"]
+        DISKS[("storageRoot from lab.config.json<br/>VM configuration, virtual disks, images")]
+        GW["Host address on the lab network<br/>172.29.70.1/24"]
+        NAT["Hyper-V: WinNAT<br/>VirtualBox: NAT network<br/>Outbound only"]
+        SW["Hyper-V: internal switch Wazuh-Lab<br/>VirtualBox: host-only adapter<br/>Static addressing, no DHCP"]
     end
-    subgraph MVM["Manager VM: Ubuntu 24.04 amd64"]
+    subgraph MVM["Manager VM: Ubuntu 24.04 cloud image"]
         FW["ufw<br/>Default deny inbound"]
-        MS["172.29.70.10<br/>4 vCPU / 8 GiB / 80 GiB disk"]
+        MS["172.29.70.10<br/>full 4 vCPU / 6 GiB / 60 GiB<br/>lean 2 vCPU / 4 GiB / 32 GiB"]
         SSH["sshd: TCP 22"]
         WEB["Wazuh dashboard: HTTPS 443"]
         EVENTS["Agent event receiver: TCP 1514"]
         LOCAL["Internal services<br/>Indexer 9200 and manager API 55000"]
     end
-    WVM["Windows 11 Pro VM<br/>172.29.70.20<br/>4 vCPU / 6 GiB / 80 GiB disk<br/>Secure Boot and virtual TPM"]
-    LVM["Ubuntu 24.04.5 VM<br/>172.29.70.30<br/>2 vCPU / 2 GiB / 24 GiB disk<br/>SSH 22 for administration"]
+    WVM["Windows 11 VM: full profile only<br/>172.29.70.20<br/>2 vCPU / 4 GiB / 64 GiB<br/>Secure Boot and virtual TPM<br/>OpenSSH Server, host only"]
+    LVM["Ubuntu 24.04 VM: cloud image<br/>172.29.70.30<br/>full 2 vCPU / 1.5 GiB / 20 GiB<br/>lean 1 vCPU / 1 GiB / 16 GiB<br/>SSH 22 for administration"]
     BROWSER --> HOSTAPI
     HOSTAPI --> ADMIN
     ADMIN -->|VM operations| MS

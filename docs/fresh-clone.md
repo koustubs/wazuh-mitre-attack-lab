@@ -25,7 +25,7 @@ complaining it cannot find a public key, which is confusing rather than informat
   here installs one for you. `setup\Test-LabHost.ps1` reports which are usable on this machine
   and prints the command for the one you pick.
 - The Windows OpenSSH client, for `ssh`, `scp` and `ssh-keygen`. Windows 11 ships it.
-- 60 GB free for the lean profile, 160 GB for the full one, plus about 36 GB transiently while
+- 60 GB free for the lean profile, 180 GB for the full one, plus about 36 GB transiently while
   the Ubuntu image is unpacked. `Test-LabHost.ps1` checks this against the profile.
 - WSL with Ubuntu, only to run the offline rule suite.
 - Python 3.10 or later with NumPy, only to rebuild the model. `scoring/requirements.txt`.
@@ -62,8 +62,9 @@ from `scoring/`:
 
 ```
 python import-ait.py                 # windows the alerts into episodes
-python evaluate.py                   # eight folds, one per network
+python evaluate.py                   # eight folds, one per network. About fifty minutes
 python evaluate_adaptive.py          # the baseline layer, measured the same way
+python window-sensitivity.py         # what the window width and the split are worth
 python export-model.py               # writes scorer/model.json
 ```
 

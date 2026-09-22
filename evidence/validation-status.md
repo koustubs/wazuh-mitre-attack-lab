@@ -3,7 +3,11 @@
 What has been verified, how, and what has not. Raw run output stays out of Git because it
 carries account names and addresses; this file is the summary that can be committed.
 
-Last updated 11 September 2026, against Wazuh 4.14.7 and OpenSearch Dashboards 2.19.5.
+Everything below was verified on 11 September 2026, against Wazuh 4.14.7 and OpenSearch
+Dashboards 2.19.5, and the date is the verification rather than the last edit. The packaging
+work since then changed how the lab is built and how the dashboard reads it; none of those
+results have been re-run against a lab built the new way, and section 6 says what that leaves
+open.
 
 ## 1. Rule checks, synthetic
 
@@ -97,8 +101,26 @@ Reproduce with `tests/s1-burst.sh` on an endpoint and `tests/query-frequency.sh`
 
 - The same two edge cases on the Windows rule 100101. The mechanism under test belongs to
   `wazuh-analysisd` and is shared by both rules, but rule 100101 keys on different fields and has
-  not been exercised this way. The Windows endpoint is reachable only through Hyper-V PowerShell
-  Direct, which needs an elevated host session.
+  not been exercised this way.
 - Behaviour when the manager is under sustained load. All timings were measured on an idle lab.
 - Anything outside S1 to S3. The rule set covers three behaviours by design and coverage claims
   should stay limited to the table in section 2.
+
+## 6. Changed since these were verified
+
+None of section 1 to 4 has been re-run against a lab built the way the current scripts build
+one. The detections and the rules are untouched, so the results should hold, but "should" is
+not "did" and this is the list of what a re-run would be covering.
+
+- The Ubuntu guests now boot a cloud image and configure themselves from cloud-init. The
+  previous guests were installed from an ISO. Same release, different image.
+- VirtualBox is a supported backend. Every result here was measured on Hyper-V.
+- The Windows endpoint is reached over OpenSSH rather than PowerShell Direct, which is what
+  removed the obstacle to the two 100101 edge cases above. They are still not done.
+- The manager is tuned after install: indexer heap sized to the profile, vulnerability
+  detection off, syscollector lengthened. The five to seven second alert latency in section 2
+  was measured before any of that.
+- The lean profile gives the manager 4 GB, below Wazuh's published recommendation for an
+  all-in-one deployment. Nothing here was measured on it.
+- The dashboard reads alerts from the indexer rather than from a log tail, and scores each
+  endpoint against its own baseline. Section 3 covers the presentation path as it was.

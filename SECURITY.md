@@ -31,10 +31,19 @@ on. They are here because a detection you have never seen fire is not a detectio
 
 ## Network exposure
 
-The lab runs on an internal Hyper-V switch with NAT, and the manager's firewall is set by
-`manager/install-manager.sh` to accept SSH and 443 only from the host, and agent traffic on 1514
-only from the two endpoint addresses. The Wazuh web interface is not reachable from anywhere
-except the host.
+The lab runs on a private network with outbound NAT and no route in: an internal switch on
+Hyper-V, a host-only adapter alongside a NAT network on VirtualBox. The manager's firewall is
+set by `manager/install-manager.sh` to accept SSH and 443 only from the host, and agent traffic
+on 1514 only from the endpoint addresses in `lab.config.json`. The Windows endpoint's OpenSSH
+listener is scoped to the host address by a rule its unattend file writes. The Wazuh web
+interface is not reachable from anywhere except the host.
+
+The manager runs three root-owned helpers the dashboard is granted through sudoers by exact
+path, rather than a general grant: an authenticated indexer search over the admin certificate,
+the per-endpoint baseline, and the dashboard credentials. The indexer admin
+password is never read, never copied and never placed on a command line; the credentials helper
+prints it to standard output rather than taking it as an argument. Every sudoers file is
+validated with `visudo -c -f` before it is installed.
 
 The lab dashboard binds `127.0.0.1` only, never `0.0.0.0`, and requires a per-run token on every
 API call.

@@ -9,9 +9,10 @@
 > version, and [step 5](../../scoring/README.md) does it anyway, because the mentor
 > raised it after this document was agreed. It sits outside the first version rather than
 > inside it. Its result is narrower than "a model does not beat the rules": logistic
-> regression does beat the best single rule, 0.249 average precision against 0.161, and it
-> beats the tested sequence model. What does not hold up is the neural model, and the
-> portable version that can run on this lab scores 0.177.
+> regression does beat the best single rule, 0.251 average precision against 0.160, and it
+> beats the tested sequence model on seven folds of eight. What does not hold up is the neural
+> model. The portable version that can run on this lab scores 0.220, which is most of the
+> full model rather than a fraction of it.
 
 ## Problem statement
 
