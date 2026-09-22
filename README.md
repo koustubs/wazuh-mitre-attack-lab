@@ -17,9 +17,9 @@ different project. The guests are Ubuntu and Windows.
 
 ## What you need
 
-| | lean | full |
+| | Required | Recmmended |
 | --- | --- | --- |
-| Host RAM | 8 GB | 16 GB |
+| Host RAM | 12-16 GB | 32+ GB |
 | Free disk | 60 GB | 180 GB |
 | CPU | 4 cores with SVM or VT-x and SLAT | same |
 | Host OS | Windows 10 21H2 or Windows 11 | same |
