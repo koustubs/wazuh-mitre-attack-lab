@@ -56,12 +56,33 @@ $staging = Join-Path ([IO.Path]::GetTempPath()) ('lab-agent-keys-' + [guid]::New
 New-Item -ItemType Directory -Path $staging | Out-Null
 
 function Invoke-Ssh {
+    <#
+        Runs ssh and leaves its exit code in $LASTEXITCODE. Deliberately returns nothing.
+
+        Returning $LASTEXITCODE reads well and does not work, because it makes the caller write
+        "$code = Invoke-Ssh ...", and assigning the result of a native command is what tells
+        PowerShell to give that command a pipe instead of the console. Two things broke at once,
+        and neither looked like the other.
+
+        The sudo prompt on the endpoint went into the pipe rather than onto the screen, so the
+        one step this script documents as stopping and waiting for you gave no sign that it was
+        waiting, and sudo timed out on a password nobody knew to type.
+
+        And $code came back as ssh's captured output with the exit code appended to it, so the
+        failure message formatted the first line of that output in place of the number:
+
+            the installer exited [sudo] password for labadmin: .
+
+        which names neither the failure nor the exit code.
+
+        Left unassigned, the native process inherits the console, the prompt appears, and typing
+        at it works. The caller reads $LASTEXITCODE on the next line.
+    #>
     param([string]$Address, [string]$Command, [switch]$Tty)
     $sshArgs = @($ssh)
     if ($Tty) { $sshArgs += '-t' }
     $sshArgs += @(('{0}@{1}' -f $user, $Address), $Command)
     & ssh.exe @sshArgs
-    return $LASTEXITCODE
 }
 
 try {
@@ -122,7 +143,8 @@ try {
 
         # 3. Run it, then take both files back off the endpoint whatever happened.
         Write-Host '  installing, this asks for the console password'
-        $code = Invoke-Ssh -Address $endpoint.Address -Command ($run + $cleanup) -Tty:$tty
+        Invoke-Ssh -Address $endpoint.Address -Command ($run + $cleanup) -Tty:$tty
+        $code = $LASTEXITCODE
         if ($code -ne 0) {
             Write-Host ("  the installer exited {0}. Nothing was left behind on the endpoint." -f $code) -ForegroundColor Red
             $failed += $endpoint.Name
