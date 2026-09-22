@@ -541,11 +541,21 @@ function Invoke-LabSsh {
     Start-Process with a hard timeout rather than the call operator, because the listener is
     single threaded: an ssh that hangs would freeze the whole dashboard, not just this panel.
     ConnectTimeout only covers the connect phase, so the wait is the real guard.
+
+    -StdinText feeds the far side on standard input instead of putting the payload in argv.
+    CreateProcess caps a command line at 32767 characters, and it counts the whole line, not
+    the one argument. Get-LabHealth ships a base64 script that passed that cap the moment the
+    scorer was folded into it, and the failure is silent: Start-Process throws, the catch below
+    returns $null, and the caller reports it as the manager not answering. Anything whose size
+    is not fixed goes down this path. Start-Process redirects stdin from a file rather than a
+    stream, which also keeps the no-deadlock property the out and err redirections have.
     #>
-    param([string]$Address, [string]$Command, [int]$TimeoutSeconds = 8, [int]$ConnectSeconds = 8)
+    param([string]$Address, [string]$Command, [int]$TimeoutSeconds = 8, [int]$ConnectSeconds = 8,
+          [string]$StdinText)
     if (-not (Test-Path -LiteralPath $LabSshKey)) { return $null }
     $outFile = [IO.Path]::GetTempFileName()
     $errFile = [IO.Path]::GetTempFileName()
+    $inFile = $null
     try {
         $sshArgs = @(
             '-i', ('"{0}"' -f $LabSshKey)
@@ -556,8 +566,22 @@ function Invoke-LabSsh {
             ('{0}@{1}' -f $LabSshUser, $Address)
             ('"{0}"' -f $Command)
         )
-        $proc = Start-Process -FilePath 'ssh.exe' -ArgumentList $sshArgs -NoNewWindow -PassThru `
-            -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        $startArgs = @{
+            FilePath               = 'ssh.exe'
+            ArgumentList           = $sshArgs
+            NoNewWindow            = $true
+            PassThru               = $true
+            RedirectStandardOutput = $outFile
+            RedirectStandardError  = $errFile
+        }
+        if ($PSBoundParameters.ContainsKey('StdinText')) {
+            # No BOM and no trailing CR: the far side pipes this straight into base64 -d.
+            $inFile = [IO.Path]::GetTempFileName()
+            [IO.File]::WriteAllText($inFile, ($StdinText + "`n"),
+                (New-Object Text.UTF8Encoding($false)))
+            $startArgs.RedirectStandardInput = $inFile
+        }
+        $proc = Start-Process @startArgs
         # Reading Handle here is not pointless. Start-Process -PassThru hands back a Process
         # object that has not cached the process handle, and once the process exits there is
         # nothing left to read an exit code from: ExitCode comes back empty rather than 0.
@@ -574,7 +598,9 @@ function Invoke-LabSsh {
     } catch {
         return $null
     } finally {
-        Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+        $temps = @($outFile, $errFile)
+        if ($inFile) { $temps += $inFile }
+        Remove-Item -LiteralPath $temps -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -595,8 +621,10 @@ function Get-LabHealth {
     if ($script:HealthCache -and ([datetime]::UtcNow - $script:HealthStamp).TotalSeconds -lt $HealthIntervalSeconds) {
         return $script:HealthCache
     }
-    $command = 'echo {0} | base64 -d | python3 -' -f $script:StatusB64
-    $raw = Invoke-LabSsh -Address $ManagerAddress -Command $command -TimeoutSeconds 20 -ConnectSeconds 6
+    # The script arrives on stdin, not in argv. See the -StdinText note on Invoke-LabSsh: at
+    # 34,644 base64 characters this payload is past what a Windows command line can carry.
+    $raw = Invoke-LabSsh -Address $ManagerAddress -Command 'base64 -d | python3 -' `
+        -StdinText $script:StatusB64 -TimeoutSeconds 20 -ConnectSeconds 6
     $script:HealthStamp = [datetime]::UtcNow
     if (-not $raw) {
         $script:HealthCache = [ordered]@{
