@@ -113,33 +113,46 @@ try {
         }
         Write-Host '  key collected'
 
-        # 2. The key and the installer across to the endpoint.
+        # 2. The key and everything the installer needs across to the endpoint.
+        #
+        # A list rather than one path, because an installer that calls a second file is an
+        # installer that needs the second file. Copying only the entry point left
+        # install-agent.sh on the endpoint without configure_agent.py, so it installed the agent
+        # package, stopped the service, wrote the audit rules, and then died at its own line 65
+        # on "can't open file '/home/labadmin/configure_agent.py'".
+        #
+        # Each $cleanup reads the installer's status before removing anything and re-raises it
+        # afterwards. A bare "; rm" makes the removal's own success the exit status of the whole
+        # remote command, which is how the failure above was reported back as enrolled.
         if ($endpoint.Os -eq 'windows') {
-            $installer = Join-Path $PSScriptRoot '..\agents\windows\Install-Agent.ps1'
+            $payload = @('..\agents\windows\Install-Agent.ps1')
             $remoteDir = 'C:/Windows/Temp'
             $run = ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Windows\Temp\Install-Agent.ps1 ' +
                     '-ManagerAddress {0} -AgentKeyFile C:\Windows\Temp\{1}.key -ExpectedComputerName {2} -AgentName {1}' -f
                     $manager.Address, $agent, $endpoint.Hostname)
-            $cleanup = '; Remove-Item C:\Windows\Temp\Install-Agent.ps1, C:\Windows\Temp\{0}.key -Force -ErrorAction SilentlyContinue' -f $agent
+            $cleanup = ('; $rc = $LASTEXITCODE; Remove-Item C:\Windows\Temp\Install-Agent.ps1, ' +
+                        'C:\Windows\Temp\{0}.key -Force -ErrorAction SilentlyContinue; exit $rc') -f $agent
             $tty = $false
         } else {
-            $installer = Join-Path $PSScriptRoot '..\agents\linux\install-agent.sh'
+            $payload = @('..\agents\linux\install-agent.sh', '..\agents\linux\configure_agent.py')
             $remoteDir = '~/'
             # -t, because sudo here is going to ask for the console password and it needs a
             # terminal to ask on. This is the one step that stops and waits for you.
             $run = ('sudo bash ~/install-agent.sh {0} ~/{1}.key' -f $manager.Address, $agent)
-            $cleanup = ('; rm -f ~/install-agent.sh ~/{0}.key' -f $agent)
+            $cleanup = ('; rc=$?; rm -f ~/install-agent.sh ~/configure_agent.py ~/{0}.key; exit $rc' -f $agent)
             $tty = $true
         }
-        $installer = (Resolve-Path -LiteralPath $installer).Path
+        $payload = @($payload | ForEach-Object {
+            (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot $_)).Path
+        })
 
-        & scp.exe @ssh $installer $localKey ('{0}@{1}:{2}' -f $user, $endpoint.Address, $remoteDir) 2>&1 | Out-Null
+        & scp.exe @ssh @payload $localKey ('{0}@{1}:{2}' -f $user, $endpoint.Address, $remoteDir) 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
             Write-Host '  could not copy the installer across. Is the endpoint up and reachable over SSH?' -ForegroundColor Red
             $failed += $endpoint.Name
             continue
         }
-        Write-Host '  installer and key copied'
+        Write-Host ('  {0} file(s) and the key copied' -f $payload.Count)
 
         # 3. Run it, then take both files back off the endpoint whatever happened.
         Write-Host '  installing, this asks for the console password'
