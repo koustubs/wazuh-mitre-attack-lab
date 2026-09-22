@@ -58,11 +58,20 @@ foreach ($check in $result.checks) {
     }
 }
 
+# What to run next depends on how much of the lab already exists. Telling somebody whose three
+# VMs are running to go and generate an SSH key is how a preflight gets ignored.
+$vmCheck  = $result.checks | Where-Object { $_.id -eq 'vms' }
+$keyCheck = $result.checks | Where-Object { $_.id -eq 'secrets' }
+$next =
+    if ($vmCheck -and $vmCheck.state -eq 'pass') { '.\Lab.cmd, or docs\setup.md from step 6 to finish enrolment' }
+    elseif ($keyCheck -and $keyCheck.state -eq 'pass') { 'setup\Get-LabImage.ps1' }
+    else { 'setup\New-LabSecrets.ps1' }
+
 Write-Host ''
 if ($result.ready -and $result.warned -eq 0) {
-    Write-Host 'Nothing to fix. Next: setup\New-LabSecrets.ps1' -ForegroundColor Green
+    Write-Host ('Nothing to fix. Next: {0}' -f $next) -ForegroundColor Green
 } elseif ($result.ready) {
-    Write-Host ('{0} warning(s), nothing that stops you. Next: setup\New-LabSecrets.ps1' -f $result.warned) -ForegroundColor Yellow
+    Write-Host ('{0} warning(s), nothing that stops you. Next: {1}' -f $result.warned, $next) -ForegroundColor Yellow
 } else {
     Write-Host ('{0} failing check(s). Fix those first; the lines in blue are the commands.' -f $result.failed) -ForegroundColor Red
 }
