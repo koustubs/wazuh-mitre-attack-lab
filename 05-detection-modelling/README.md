@@ -121,10 +121,12 @@ Three things worth taking from that, and they are not all negative.
 than chance, and the single rule at 0.161 is not far behind. The signal is there; the argument
 is only about what is needed to extract it.
 
-**None of them are deployable.** The best operating point found was precision 1.000 at recall
-0.225: it catches a fifth of the intrusions. Turn the threshold up for recall and it produces
-917 false positives on 2,442 windows. This is what alert triage actually looks like at a 2%
-base rate, and it is the honest correction to the synthetic result below.
+**None of them are deployable.** Take the winning model on its best fold, wheeler, which is
+1,166 windows containing 16 attack windows. Ranked by score it holds perfect precision down to
+recall 0.375, six attacks caught and nothing false. Push it to catch half of them, recall
+0.500, and precision is 0.063: eight real attacks arriving with 119 false positives beside
+them. This is what alert triage actually looks like at a 2% base rate, and it is the honest
+correction to the synthetic result below.
 
 **The synthetic numbers were measuring the generator.** For comparison, on
 `make-synthetic.py` output: rule 100111 alone f1 0.857, GRU f1 0.948 over five seeds, logistic

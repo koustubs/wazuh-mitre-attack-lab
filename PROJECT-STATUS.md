@@ -407,6 +407,35 @@ all three states the panel can be in. It has not yet been watched against a live
   end to end, which is not the same as seeing the score move while an S1 burst runs. That is
   ten minutes with both VMs up and it is the screenshot worth having.
 
+**From the external review, `docs/handoff-review-2026-09-21.md`.** An outside pass over the
+repository and the session exports found five code issues that have not been fixed. They are
+listed here rather than in that file alone so they are not lost, and none of them reverses the
+headline result that logistic regression beats the sequence model on all eight folds.
+
+- `05-detection-modelling/features.py` ranks equal scores by input order, so a binary
+  single-rule score gets an order-dependent average precision. Grouping ties gives about
+  0.1645 for the single-rule baseline against the stored 0.1608. Every figure derived from
+  that column should be recomputed.
+- `05-detection-modelling/evaluate.py` describes a whole-network validation holdout but takes
+  an 85% row cut, which splits a network in all eight folds, and standardisation is fitted
+  before that inner split. The outer test networks are still separate, so this is not label
+  leakage into the test set, but the validation independence claim is wrong as written.
+- `Start-LabDashboard.ps1` reads at most the last 400 KB and 800 records, so the oldest bucket
+  can be truncated and still treated as complete, and the newest alert decides which bucket is
+  partial, so a quiet completed window never closes until another alert arrives.
+- `scorer/score.py` treats credential access and persistence anywhere in the same window as a
+  chain, and the dashboard drops endpoint identity while bucketing, so unrelated activity on
+  two different endpoints earns the same multiplier. Either describe it as co-occurrence or
+  implement the temporal and identity relationship.
+- `import-ait.py` anchors windows to the first capture event and keeps at most 256 events per
+  window, while live scoring uses epoch boundaries and a global tail limit. Training and live
+  features are therefore not sampled the same way.
+
+Also from that review, and already fixed: the shareable session export carried an
+administrator password on three pages because the redaction matched on the label immediately
+preceding a value. Redaction is now by value, and `check-export.py` verifies the finished PDF
+rather than the HTML it came from.
+
 **Housekeeping:**
 
 - The PDF for the mentor covers steps 1 to 3 and predates the build. If he wants the results, it

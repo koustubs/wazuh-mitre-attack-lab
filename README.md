@@ -69,8 +69,10 @@ across several machines. Both results are recorded in
 
 ## Does a model beat the rules?
 
-The six rules each judge one event in isolation. The obvious next question is whether something
-reading a *run* of alerts does better, and whether that something needs to be a neural network.
+Four of the six rules judge one event in isolation. The two S1 rules count repeated failures
+inside a window, which is the only correlation in the ruleset. The obvious next question is
+whether something reading a *run* of alerts does better, and whether that something needs to
+be a neural network.
 
 Tested on the [AIT Alert Data Set](https://zenodo.org/records/8263181): 2.6 million real Wazuh
 alerts from eight simulated enterprise networks, each with a labelled multi-step intrusion. Each
@@ -90,9 +92,9 @@ bursty they were carries the signal, and the order adds little on top.
 
 The winner is also the one model that cannot be deployed here. Its columns are one per AIT rule
 id, and this lab shares two signatures out of thirty one, so pointed at live alerts it would put
-every one of them in the unknown column and return a confident number about nothing. The third
-row is the feature set that survives the move: eleven columns describing the shape and severity
-of a window with no rule identity in them. It keeps 71% of the full model and beats the best
+every one of them in the unknown column and return a confident number about nothing. The row
+marked deployed is the feature set that survives the move: eleven columns describing the shape
+and severity of a window with no rule identity in them. It keeps 71% of the full model and beats the best
 single rule, and the gap is the measured price of portability.
 
 That one runs live. The [lab dashboard](04-implementation/host/lab-dashboard/README.md) scores
