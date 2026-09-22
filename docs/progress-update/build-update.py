@@ -161,7 +161,7 @@ TEMPLATE = """<!doctype html>
 
 <h1>Sequence modelling for multi-event detection</h1>
 <p class="sub">Evaluation against non-neural baselines, and the model deployed</p>
-<p class="meta">%(generated)s &middot; Prepared by Koustub</p>
+<p class="meta">%(generated)s</p>
 
 <h2>Summary</h2>
 

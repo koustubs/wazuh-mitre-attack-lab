@@ -185,7 +185,7 @@
    "shape_f1": 0.1875
   }
  ],
- "generated": "2026-09-21",
+ "generated": "2026-09-22",
  "model": {
   "bias": -0.27665618,
   "caveat": "Fitted on eight public networks and never measured on this lab, whose own rules appear in no public dataset. Treat the score as triage ordering, not as a detection. A campaign is what would replace this sentence with a number.",
