@@ -376,6 +376,209 @@
   .credprob { font-size: 12.5px; color: var(--warn); flex: 1 1 240px; min-width: 0; }
   .crednote { font-size: 11.5px; color: var(--ink-faint); margin-top: 2px; line-height: 1.45; }
 
+  /* ---- Guided tour ----------------------------------------------------------------------
+     Dark in both colour schemes: it sits on a dark scrim, and a light card on a dark scrim
+     reads as a hole in it. The colour ring is shared by the button that opens the tour and the
+     frame around each highlighted part: a conic gradient on a square big enough to cover its box
+     at any angle, masked down to the padding. It turns by transform, which the compositor runs
+     on its own, so the page repaints nothing while it spins. */
+  @keyframes tour-spin { to { transform: rotate(1turn); } }
+  @keyframes tour-glow { from { opacity: .5; } to { opacity: .95; } }
+  .tour-rgb { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; container-type: size;
+              -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+              -webkit-mask-composite: xor; mask-composite: exclude; }
+  .tour-rgb::before { --s: calc(min(142cqmax, 100cqw + 100cqh) + 16px);
+                      content: ""; position: absolute; left: 50%; top: 50%; width: var(--s); height: var(--s);
+                      margin: calc(var(--s) / -2) 0 0 calc(var(--s) / -2);
+                      background: conic-gradient(#ff2a55, #ff8a00, #ffe14d, #2ee88a, #1fc8ff, #4a5cff, #b43cff, #ff2a55);
+                      animation: tour-spin 3.2s linear infinite; }
+
+  .tour-launch { position: relative; display: inline-flex; border-radius: 8px; }
+  /* The glow behind the button: the same gradient left whole, clipped to the button's shape and blurred. */
+  .tour-launch > .tour-rgb { inset: 2px; -webkit-mask: none; mask: none; overflow: hidden;
+                             filter: blur(8px); opacity: .3; transition: opacity .25s ease; }
+  .tour-launch:hover > .tour-rgb, .tour-launch:focus-within > .tour-rgb { opacity: .75; }
+  #tourBtn { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 7px;
+             border-color: transparent; border-radius: 8px; font-weight: 600; }
+  #tourBtn .tour-rgb { inset: -1px; padding: 1.5px; }
+  #tourBtn:hover:not(:disabled) { border-color: transparent; }
+  #tourBtn svg { flex: none; }
+
+  #tour { position: fixed; inset: 0; z-index: 1000; opacity: 0; transition: opacity .25s ease;
+          pointer-events: none; --tour-ease: cubic-bezier(.22, .9, .26, 1); }
+  #tour.on { opacity: 1; }
+  /* Takes every click on the page. A Try it step cuts a hole in it over the one control it asks
+     for, so that control, and nothing else, can be pressed. */
+  .tour-block { position: absolute; inset: 0; pointer-events: auto; }
+  /* The scrim is the spotlight's own shadow, so the lit area and the dark around it can never
+     disagree about where the edge is. */
+  .tour-spot { position: fixed; left: 50%; top: 50%; width: 0; height: 0; border-radius: 14px;
+               box-shadow: 0 0 0 300vmax rgba(6, 8, 12, .74); pointer-events: none;
+               transition: left .5s var(--tour-ease), top .5s var(--tour-ease),
+                           width .5s var(--tour-ease), height .5s var(--tour-ease),
+                           border-radius .5s var(--tour-ease); }
+  .tour-ring { position: absolute; inset: -2px; border-radius: inherit; transition: opacity .3s ease; }
+  .tour-ring .tour-rgb { padding: 2px; }
+  .tour-ring.glow { filter: blur(9px); animation: tour-glow 1.6s ease-in-out infinite alternate; }
+  .tour-ring.glow .tour-rgb { padding: 4px; }
+  #tour.centered .tour-ring { opacity: 0; animation: none; }
+  #tour.centered .tour-rgb::before { animation-play-state: paused; }
+  /* A Try it step: the frame turns faster and a ring keeps rippling out from the control. Every
+     moving part of the tour is a transform or an opacity, for the same reason as the spin; the
+     script sets the ripple's scale so it grows 15px on every side whatever the control's shape. */
+  .tour-spot.act .tour-rgb::before { animation-duration: 1.4s; }
+  .tour-spot.act::after { content: ""; position: absolute; inset: -3px; border-radius: inherit;
+                          border: 2px solid rgba(255, 255, 255, .85);
+                          animation: tour-ping 1.5s cubic-bezier(0, 0, .2, 1) infinite; }
+  @keyframes tour-ping { from { opacity: .9; } to { transform: scale(var(--sx), var(--sy)); opacity: 0; } }
+  @keyframes tour-pulse { from { opacity: .55; } to { transform: scale(3.25); opacity: 0; } }
+  @keyframes tour-packet { from { transform: none; opacity: 0; } 15%, 85% { opacity: 1; }
+                           to { transform: translateX(calc(100% - 10px)); opacity: 0; } }
+
+  /* The card keeps the colour out: the ring marks the page, the card is plain and quiet so the
+     words are what stands out in it. Three bands, divided by hairlines. */
+  .tour-card { position: fixed; left: 0; top: 0; width: 400px; max-width: calc(100vw - 28px);
+               pointer-events: auto; border-radius: 14px; color: #e9ebf1; background: #16191f;
+               border: 1px solid rgba(255, 255, 255, .13);
+               box-shadow: 0 30px 80px rgba(0, 0, 0, .6), 0 3px 10px rgba(0, 0, 0, .4);
+               font-size: 13px; line-height: 1.65; opacity: 0; visibility: hidden;
+               transform: translate3d(var(--x, 0), var(--y, 0), 0) scale(.96);
+               transition: opacity .2s ease, transform .4s var(--tour-ease), visibility 0s linear .2s; }
+  .tour-card.show { opacity: 1; visibility: visible; transform: translate3d(var(--x, 0), var(--y, 0), 0);
+                    transition: opacity .2s ease, transform .4s var(--tour-ease), visibility 0s; }
+  /* Placed without travelling: a card sliding in from the previous step's corner reads as
+     debris crossing the screen. Only the scale settles. */
+  .tour-card.jump { transition: opacity .2s ease, visibility 0s; }
+  .tour-card.wide { width: 600px; }
+  .tour-arrow { position: absolute; display: none; width: 12px; height: 12px; background: #16191f;
+                border: 1px solid rgba(255, 255, 255, .13); transform: rotate(45deg); }
+  .tour-card[data-side="right"] .tour-arrow { display: block; left: -7px; top: calc(var(--a) - 6px);
+                border-top-color: transparent; border-right-color: transparent; }
+  .tour-card[data-side="left"] .tour-arrow { display: block; right: -7px; top: calc(var(--a) - 6px);
+                border-bottom-color: transparent; border-left-color: transparent; }
+  .tour-card[data-side="bottom"] .tour-arrow { display: block; top: -7px; left: calc(var(--a) - 6px);
+                border-bottom-color: transparent; border-right-color: transparent; }
+  .tour-card[data-side="top"] .tour-arrow { display: block; bottom: -7px; left: calc(var(--a) - 6px);
+                border-top-color: transparent; border-left-color: transparent; }
+
+  .tour-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 10px 18px;
+               border-bottom: 1px solid rgba(255, 255, 255, .08); }
+  .tour-chapter { min-width: 0; font-size: 10.5px; font-weight: 650; letter-spacing: .1em;
+                  text-transform: uppercase; color: #9aa3b5; white-space: nowrap; overflow: hidden;
+                  text-overflow: ellipsis; }
+  .tour-tag { flex: none; font-size: 9.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase;
+              padding: 1px 7px; border-radius: 999px; color: #9fdcff; border: 1px solid rgba(31, 200, 255, .35); }
+  .tour-tag.adv { color: #ffd27a; border-color: rgba(255, 190, 80, .4); }
+  .tour-tag.try { color: #0d0f14; background: #f1f3f8; border-color: #f1f3f8; }
+  .tour-count { margin-left: auto; flex: none; font: 600 11px/1 ui-monospace, Consolas, monospace; color: #7f889b; }
+  #tour .tour-x { flex: none; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px;
+                  background: transparent; color: #7f889b; font-size: 18px; line-height: 1; }
+  #tour .tour-x:hover { background: rgba(255, 255, 255, .07); color: #fff; }
+  .tour-card h2 { margin: 16px 18px 8px; font-size: 17px; font-weight: 650; letter-spacing: -0.015em; color: #fff; }
+  .tour-body { padding: 0 18px; color: #c3c8d3; max-height: calc(100vh - 260px); overflow-y: auto; }
+  .tour-body p { margin: 0 0 10px; }
+  .tour-body p:last-child, .tour-body ul:last-child, .tour-body ol:last-child { margin-bottom: 0; }
+  .tour-body b { color: #fff; font-weight: 600; }
+  .tour-body code { font: 12px ui-monospace, Consolas, monospace; color: #e9ebf1; padding: 1px 5px;
+                    border-radius: 5px; background: rgba(255, 255, 255, .07);
+                    border: 1px solid rgba(255, 255, 255, .09); }
+  .tour-body ul, .tour-body ol { margin: 0 0 9px; padding-left: 19px; }
+  .tour-body li { margin: 3px 0; }
+  .tour-body li::marker { color: #6f7890; }
+  .tour-dim { color: #8a93a6; font-size: 12px; }
+  .tour-note { margin-top: 11px; padding: 8px 11px; border-radius: 0 8px 8px 0; font-size: 12.5px;
+               color: #b8d6e6; background: rgba(31, 200, 255, .07); border-left: 2px solid #1fc8ff; }
+
+  /* The instruction on a Try it step, and its answer once the control has been pressed. */
+  .tour-do { display: flex; align-items: center; gap: 10px; margin: 14px 18px 0; padding: 9px 12px;
+             border-radius: 9px; color: #fff; background: rgba(255, 255, 255, .05);
+             border: 1px solid rgba(255, 255, 255, .16); }
+  .tour-do[hidden] { display: none; }
+  .tour-do b { font-weight: 650; }
+  .tour-do .ping, .tour-do .ping::after { width: 8px; height: 8px; border-radius: 50%; background: #fff; }
+  .tour-do .ping { position: relative; flex: none; margin: 0 2px; }
+  .tour-do .ping::after { content: ""; position: absolute; left: 0; top: 0; animation: tour-pulse 1.4s ease-out infinite; }
+  .tour-do.done { color: #c4f5da; background: rgba(46, 232, 138, .07); border-color: rgba(46, 232, 138, .35); }
+  .tour-do .tick { flex: none; position: relative; width: 16px; height: 16px; border-radius: 50%; background: #2ee88a; }
+  .tour-do .tick::after { content: ""; position: absolute; left: 5.5px; top: 3px; width: 4px; height: 7px;
+                          border: solid #0d0f14; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+
+  .tour-bands { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 11px; }
+  .tour-bands span { font-size: 10px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase;
+                     padding: 2px 8px; border-radius: 999px; border: 1px solid; }
+  .tour-bands .i { color: #9aa3b5; border-color: rgba(154, 163, 181, .4); }
+  .tour-bands .l { color: #6cb6ff; border-color: rgba(108, 182, 255, .45); }
+  .tour-bands .e { color: #f2b441; border-color: rgba(242, 180, 65, .5); }
+  .tour-bands .h { color: #ff7a7a; border-color: rgba(255, 122, 122, .5); }
+  .tour-bands .c { color: #1a0b0b; background: #ff6b6b; border-color: #ff6b6b; }
+
+  .tour-chapters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 13px 0 12px; }
+  #tour .tour-chapters button { display: flex; flex-direction: column; gap: 1px; text-align: left;
+        padding: 10px 12px; border-radius: 10px; color: #e9ebf1; background: rgba(255, 255, 255, .035);
+        border: 1px solid rgba(255, 255, 255, .09);
+        transition: border-color .15s ease, background .15s ease, transform .15s ease; }
+  #tour .tour-chapters button:hover { border-color: rgba(255, 255, 255, .3);
+        background: rgba(255, 255, 255, .07); transform: translateY(-1px); }
+  .tour-chapters .n { font: 600 10px/1.5 ui-monospace, Consolas, monospace; color: #7f889b; letter-spacing: .04em; }
+  .tour-chapters .t { font-size: 13px; font-weight: 600; }
+  .tour-chapters .d { font-size: 11.5px; line-height: 1.45; color: #9aa3b5; }
+
+  .tour-map { display: grid; grid-template-columns: minmax(0, 1fr) 72px minmax(0, 1fr) 72px minmax(0, 1fr);
+              align-items: center; margin: 10px 0 15px; }
+  .tour-node { padding: 9px 8px; border-radius: 10px; text-align: center;
+               background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .12); }
+  .tour-node b { display: block; font-size: 11.5px; letter-spacing: .01em; }
+  .tour-node span { display: block; margin-top: 2px; font-size: 10.5px; line-height: 1.4; color: #9aa3b5; }
+  .tour-node.hub { border-color: rgba(255, 255, 255, .34); box-shadow: 0 0 0 3px rgba(255, 255, 255, .05); }
+  /* A dot travelling along each link, in the direction the data goes. It is drawn at the start of
+     a strip as wide as the link, so a translate of the strip's own width carries it to the end. */
+  .tour-wire { position: relative; height: 2px; margin: 0 9px; border-radius: 2px; background: rgba(255, 255, 255, .2); }
+  .tour-wire::before { content: ""; position: absolute; top: -6px; left: 0; width: 100%; height: 14px;
+                       background: radial-gradient(circle at 5px 50%, #fff 3px, rgba(255, 255, 255, .3) 4px, transparent 7px);
+                       animation: tour-packet 1.8s ease-in-out infinite; }
+  .tour-wire.in::before { animation-direction: reverse; }
+  .tour-wire em { position: absolute; left: 50%; bottom: 7px; transform: translateX(-50%); font-style: normal;
+                  font-size: 9.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase;
+                  color: #8a93a6; white-space: nowrap; }
+  .tour-wire::after { content: ""; position: absolute; top: -4px; border: 5px solid transparent; }
+  .tour-wire:not(.in)::after { right: -9px; border-left-color: #cfd5e1; }
+  .tour-wire.in::after { left: -9px; border-right-color: #cfd5e1; }
+
+  /* One bar per chapter, filling as the steps go by. */
+  .tour-progress { display: flex; gap: 6px; margin: 16px 18px 0; }
+  .tour-progress span { flex: 1; height: 3px; border-radius: 999px; overflow: hidden; background: rgba(255, 255, 255, .1); }
+  .tour-progress i { display: block; height: 100%; width: 0; border-radius: inherit; background: #f1f3f8;
+                     transition: width .45s var(--tour-ease); }
+  .tour-foot { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 12px 14px 13px 18px;
+               border-top: 1px solid rgba(255, 255, 255, .08); }
+  .tour-keys { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #7f889b; white-space: nowrap; }
+  .tour-keys kbd { font: 600 10.5px/1 ui-monospace, Consolas, monospace; color: #cfd5e1; padding: 3px 5px 2px;
+                   border-radius: 4px; border: 1px solid rgba(255, 255, 255, .16); border-bottom-width: 2px;
+                   background: rgba(255, 255, 255, .05); }
+  .tour-keys span { margin: 0 7px 0 2px; }
+  #tour .tour-foot button { font-size: 12.5px; padding: 7px 15px; border-radius: 8px; white-space: nowrap; }
+  .tour-card.last .tour-keys { display: none; }
+  #tour .tour-prev, #tour .tour-again { color: #cfd5e1; background: transparent; border: 1px solid rgba(255, 255, 255, .16); }
+  #tour .tour-prev:hover:not(:disabled), #tour .tour-again:hover { border-color: rgba(255, 255, 255, .38); }
+  #tour .tour-prev:disabled { opacity: .3; }
+  #tour .tour-next { color: #0d0f14; background: #f1f3f8; border: 1px solid #f1f3f8; font-weight: 650; }
+  #tour .tour-next:hover { background: #fff; border-color: #fff; }
+  #tour .tour-next.skip { color: #cfd5e1; background: transparent; border-color: rgba(255, 255, 255, .16); font-weight: 600; }
+  #tour .tour-next.skip:hover { background: transparent; border-color: rgba(255, 255, 255, .38); }
+  #tour button:focus-visible { outline: 2px solid #1fc8ff; outline-offset: 2px; }
+  @media (max-width: 719px) {
+    .tour-keys { display: none; }
+    .tour-map { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+    .tour-wire { display: none; }
+    .tour-chapters { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tour-rgb::before, .tour-ring.glow, .tour-spot.act::after, .tour-do .ping::after,
+    .tour-wire::before { animation: none; }
+    #tour, .tour-spot, .tour-card, .tour-card.show, .tour-progress i, .tour-launch > .tour-rgb { transition: none; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     #app, .gatebox, #gate, #gateChecks, .bar > i, .strip i, .pop, .working, .meter > i,
     .infodot { transition: none; }
@@ -409,6 +612,12 @@
   <span class="spacer"></span>
   <button type="button" class="toggle" id="advToggle" aria-pressed="false">Advanced</button>
   <button type="button" id="pause">Pause</button>
+  <span class="tour-launch"><i class="tour-rgb" aria-hidden="true"></i><button type="button" id="tourBtn"
+    aria-haspopup="dialog"><i class="tour-rgb" aria-hidden="true"></i>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M2 5.5C4.5 4 8 4 12 6c4-2 7.5-2 10-.5V19c-2.5-1.5-6-1.5-10 .5-4-2-7.5-2-10-.5z"/>
+      <path d="M12 6v13.5"/></svg>Tutorial</button></span>
 </div>
 
 <div id="banner"></div>
@@ -535,6 +744,33 @@
 </footer>
 
 </div><!-- /#app -->
+
+<!-- Outside #app, whose transform during the gate hand over would otherwise become the
+     containing block for everything fixed in here. -->
+<div id="tour" hidden>
+  <div class="tour-block"></div>
+  <div class="tour-spot"><div class="tour-ring glow"><i class="tour-rgb"></i></div><div class="tour-ring"><i class="tour-rgb"></i></div></div>
+  <div class="tour-card" id="tourCard" role="dialog" aria-modal="true" aria-labelledby="tourTitle">
+    <span class="tour-arrow"></span>
+    <div class="tour-head">
+      <span class="tour-chapter" id="tourChapter"></span>
+      <span class="tour-tag" id="tourTag"></span>
+      <span class="tour-count" id="tourCount"></span>
+      <button type="button" class="tour-x" id="tourClose" aria-label="Leave the tour">&times;</button>
+    </div>
+    <h2 id="tourTitle"></h2>
+    <div class="tour-body" id="tourBody"></div>
+    <div class="tour-do" id="tourDo" hidden aria-live="polite"></div>
+    <div class="tour-progress" id="tourProgress"></div>
+    <div class="tour-foot">
+      <span class="tour-keys"><kbd>&larr;</kbd><kbd>&rarr;</kbd><span>move</span><kbd>Esc</kbd><span>leave</span></span>
+      <span class="spacer"></span>
+      <button type="button" class="tour-again" id="tourAgain" hidden>Start over</button>
+      <button type="button" class="tour-prev" id="tourPrev">Previous</button>
+      <button type="button" class="tour-next" id="tourNext">Next</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const TOKEN = "__LAB_TOKEN__";
@@ -1491,6 +1727,625 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && !paused) { refresh().then(schedule); }
   else if (!seqRunning) { clearTimeout(timer); }
 });
+
+// ---- Guided tour -----------------------------------------------------------------------
+// Four chapters, from what the lab is to the controls that change it. Each step names a part
+// of the page; the tour brings it into view, darkens everything else and frames it. The
+// overlay takes every click, wheel and scroll key while it is open, so nothing underneath can
+// be pressed by accident on a page whose buttons power VMs off. The exception is a Try it
+// step, which opens a hole over the one control it asks for and waits for it to be pressed.
+// Every Try it can be skipped, so the tour never starts anything by itself. The last chapter
+// needs the Advanced view, and the tour puts the page back as it found it when it ends.
+const panelOf = id => () => { const el = document.getElementById(id); return el && el.closest(".panel"); };
+const firstOr = (sel, fallback) => () => document.querySelector(sel) || fallback();
+
+const TOUR_CHAPTERS = [
+  { name: "The basics",         level: "Basic",    blurb: "What the lab is and how this page opens" },
+  { name: "Running the lab",    level: "Basic",    blurb: "Start the lab, then check on its machines" },
+  { name: "Reading detections", level: "Basic",    blurb: "Alerts, scores and findings" },
+  { name: "Lab controls",       level: "Advanced", blurb: "Test attacks, services and logs" }
+];
+
+// Step text is plain words first. A title or body written as a function is given the step's
+// mode: "act" while a Try it waits for its control, "done" once it has been pressed, "idle"
+// when the control cannot be pressed right now, and "plain" for every other step.
+const TOUR_STEPS = [
+  { ch: 0, intro: true, wide: true, title: "Welcome to the lab dashboard", body: () => `
+    <p>This page starts the lab, keeps watch over it and shows what it detects. The tour covers
+    every part of it in four short chapters.</p>
+    ${tourChapterTiles()}
+    <p class="tour-dim">Steps marked <b>Try it</b> ask for a click on the real page, and each one
+    can be skipped. The rest of the page cannot be clicked while the tour is open.</p>` },
+
+  { ch: 0, wide: true, title: "How the lab fits together", body: () => `
+    <div class="tour-map">
+      <div class="tour-node"><b>This computer</b><span>runs the VMs and this page</span></div>
+      <div class="tour-wire"><em>reads</em></div>
+      <div class="tour-node hub"><b>WAZUH-MANAGER</b><span>checks logs against the rules</span></div>
+      <div class="tour-wire in"><em>logs</em></div>
+      <div class="tour-node"><b>Endpoints</b><span>${esc(tourEndpoints())}</span></div>
+    </div>
+    <p>The <b>endpoints</b> are the machines being watched. A Wazuh agent on each one sends its
+    logs to the manager.</p>
+    <p>The <b>manager</b> checks every log line against the detection rules. When one matches, it
+    raises an <b>alert</b>.</p>
+    <p>This <b>dashboard</b> runs on this computer. It switches the VMs on and off and shows what
+    the manager reports.</p>` },
+
+  { ch: 0, wide: true, title: "Opening the dashboard", body: `
+    <ol>
+      <li>Double-click <code>Lab.cmd</code> in the repository folder and accept the administrator
+      prompt. The hypervisor only reports VM state to an administrator.</li>
+      <li>A quick check of this computer runs first. Anything that would stop the lab is listed
+      with its fix.</li>
+      <li>This page then opens at <code>127.0.0.1:8077</code>. Only this computer can reach it.</li>
+    </ol>
+    <div class="tour-note">The lab itself is built once, beforehand, by following
+    <code>docs\\setup.md</code>. This page runs and watches a lab that already exists.</div>` },
+
+  { ch: 1, target: "#labbar", place: "bottom", title: "Is the lab up?", body: `
+    <p>This bar answers that at a glance. The line under the headline gives the detail, such as
+    how many agents are checking in.</p>
+    <p><b>Bring the lab up</b> starts everything in the right order. <b>Take the lab down</b> shuts
+    it all down and gives the memory back.</p>` },
+
+  { ch: 1, target: "#labbar", place: "bottom",
+    act: { sel: '#labbar button[data-lab="up"]', after: "#labbar", say: "Press <b>Bring the lab up</b>" },
+    title: m => m === "act" ? "Start the lab" : m === "done" ? "The lab is starting" : "Starting the lab",
+    body: m => m === "act" ? `
+      <p>This starts the lab's VMs in order: the manager first, then the endpoints once Wazuh is
+      ready. It takes a few minutes.</p>
+      <p class="tour-dim">Skip leaves the lab as it is.</p>`
+      : m === "done" ? `
+      <p>The bar under the headline shows each stage as it runs. The tour can carry on in the
+      meantime; the lab keeps starting in the background.</p>`
+      : tourLabIdle() },
+
+  { ch: 1, target: "#hostbar", place: "bottom", title: "This computer", body: `
+    <p>Live readings from this computer: processor load, memory in use, the memory the lab is
+    taking, and free space on each drive.</p>
+    <p>The lab only takes memory while its VMs run.</p>` },
+
+  { ch: 1, target: "#grid", title: "The virtual machines", body: `
+    <p>One card per VM. The coloured pill is its power state: <b>Running</b>, <b>Off</b>, or on
+    its way between the two.</p>
+    <p>The dots along the bottom are connection checks. Green means the VM answered.</p>` },
+
+  { ch: 1, target: firstOr("#grid .card .actions", () => document.getElementById("grid")), pad: 7,
+    radius: 10, title: "Controls for one VM", body: `
+    <p><b>Start</b>, <b>Shut down</b> and <b>Restart</b> act on this one VM.</p>
+    <p><b>Force off</b> cuts the power, like pulling the plug. Keep it for a VM that has frozen:
+    on the manager it can damage the stored alerts.</p>` },
+
+  { ch: 1, target: panelOf("health"), title: "Lab health", body: `
+    <p>A green dot means healthy. The first four lines are the Wazuh services on the manager,
+    and all four need to be <b>active</b> for detection to work:</p>
+    <ul>
+      <li><code>wazuh-manager</code> checks logs against the rules</li>
+      <li><code>wazuh-indexer</code> stores the alerts</li>
+      <li><code>filebeat</code> moves alerts into storage</li>
+      <li><code>wazuh-dashboard</code> is the Wazuh web interface</li>
+    </ul>
+    <p>Below them is one line per endpoint. <b>Active</b> means it is connected and sending
+    logs.</p>` },
+
+  { ch: 1, target: panelOf("creds"), title: "Addresses and sign-in", body: `
+    <p>Where to find each part of the lab, and the account to sign in with.</p>
+    <p>Passwords stay hidden until <b>Show passwords</b> is pressed. <b>Copy</b> puts a value on
+    the clipboard.</p>` },
+
+  { ch: 1, target: "#pause", place: "bottom", pad: 6, radius: 10, title: "Pause", body: `
+    <p>The page refreshes itself every three seconds. <b>Pause</b> freezes it, which helps when
+    reading a table that keeps moving.</p>
+    <p>The time beside the title shows the last refresh.</p>` },
+
+  { ch: 2, target: ".panel.hero", title: "What the lab can detect", body: `
+    <p>One row per detection rule. The <b>ATT&amp;CK</b> code names the attack technique it
+    catches, such as T1110.001 for password guessing.</p>
+    <p><b>Last seen</b> and <b>Count</b> show which ones have fired. Rows marked
+    <code>seed</code> count single wrong passwords; six within two minutes set off the password
+    guessing rule.</p>` },
+
+  { ch: 2, target: panelOf("alerts"), title: "Recent alerts", body: `
+    <p>Every alert the manager raised, newest first, with the machine it came from.</p>
+    <p><b>Level</b> runs from 0 to 15. Level 10 and above shows in red and is worth a look
+    first.</p>` },
+
+  { ch: 2, target: panelOf("scoring"), title: "How serious is it?", body: () => `
+    <p>One alert says little on its own, so alerts are grouped into ${esc(tourWindowText())} and
+    each window gets a score from 0 to 100.</p>
+    <p>One bar per window, newest on the right. The striped bar is the window still filling. The
+    <b>i</b> mark beside the title shows exactly how the score is worked out.</p>` },
+
+  { ch: 2, target: firstOr("#scoring .hostbar", panelOf("scoring")), title: "Five levels of concern", body: `
+    <div class="tour-bands"><span class="i">informational</span><span class="l">low</span><span
+      class="e">elevated</span><span class="h">high</span><span class="c">critical</span></div>
+    <p>Every score falls into one of these bands. A finished window that reaches
+    <b>elevated</b> or higher becomes a <b>finding</b>.</p>` },
+
+  { ch: 2, target: () => { const f = document.getElementById("findings");
+      return f && f.offsetHeight ? f : panelOf("scoring")(); },
+    act: { sel: "#findings .workbtn", spot: "#findings .finding", after: "#findings .finding.open",
+           reveal: true, pad: 7, radius: 12, say: "Press <b>Show the working</b>" },
+    title: "Findings",
+    body: m => m === "act" ? `
+      <p>Each line is one window that scored elevated or higher: when it happened, its score and
+      the machine involved.</p>
+      <p><b>chained</b> means a password attack and a new account or task showed up on the same
+      machine, a common attack pattern.</p>`
+      : m === "done" ? `
+      <p>This is the full calculation: each part of the score, how much it counted, and the
+      rules that fired in that window.</p>`
+      : `<p>No window has reached elevated yet, which is normal for a quiet lab. Once one does,
+      it is listed here as a finding with its full calculation.</p>` },
+
+  { ch: 2, target: "#exportFindings", place: "bottom", pad: 6, radius: 10, title: "Export", body: `
+    <p><b>Export findings</b> saves every finding, with its calculation, as a PDF report. It
+    stays greyed out until there is at least one finding.</p>
+    <p>The saved file's location shows at the bottom of the page.</p>` },
+
+  { ch: 2, target: panelOf("pipeline"), title: "Pipeline", body: `
+    <p>The route an alert takes into storage: free disk on the manager, how many alerts arrived
+    in the last 12 hours, and the state of the <b>indexer</b> that stores them.</p>
+    <p>An indexer status of <b>green</b> means storage is healthy.</p>` },
+
+  { ch: 3, target: "#advToggle", place: "bottom", pad: 6, radius: 10,
+    act: { sel: "#advToggle", ready: () => !document.body.classList.contains("adv"),
+           say: "Press <b>Advanced</b>" },
+    title: m => m === "act" ? "Show the lab controls" : "Lab controls on",
+    body: m => m === "act" ? `
+      <p>The controls that change things inside the lab are kept out of the way until they are
+      needed.</p>
+      <p class="tour-dim">Skip turns them on for the rest of the tour anyway.</p>`
+      : m === "done" ? `<p>The lab controls are now on the page. The next steps go through them.</p>`
+      : `<p><b>Advanced</b> is already on, so the lab controls are showing. The next steps go
+      through them.</p>` },
+
+  { ch: 3, adv: true, target: panelOf("health"), title: "Service controls", body: `
+    <p>Each Wazuh service now has <b>Restart</b> and <b>Stop</b>. Stopping a service stops
+    detection until it is started again, so the page asks first.</p>
+    <p>The Linux endpoint also gets <b>Restart agent</b>.</p>` },
+
+  { ch: 3, adv: true, target: panelOf("scenarios"), title: "Run a test attack", body: `
+    <p>Each scenario carries out a real attack technique on an endpoint, so the rules have
+    something to catch:</p>
+    <ul>
+      <li><b>S1</b> guesses a password six times (T1110.001)</li>
+      <li><b>S2</b> creates a new local account (T1136.001)</li>
+      <li><b>S3</b> adds a scheduled task or cron job (T1053)</li>
+    </ul>
+    <p>Each one removes what it created afterwards, and the alert shows under Recent alerts
+    within about a minute. The buttons stay greyed out while that VM is off.</p>` },
+
+  { ch: 3, adv: true, target: firstOr("#scenarios .svc", panelOf("scenarios")), pad: 6,
+    title: "Benign runs", body: `
+    <p>Each scenario also has a <b>benign</b> version: a harmless twin of the same action, for
+    comparison.</p>
+    <p>For S1 it is one wrong password, which stays under the alarm threshold. For S2 and S3 the
+    action is recorded as approved. The rule cannot see approvals, so it still alerts, and a
+    person has to judge it.</p>` },
+
+  { ch: 3, adv: true, target: panelOf("mlog"), title: "Manager log", body: `
+    <p>The manager's own log, newest line first. Look here when a service will not start or an
+    endpoint will not connect.</p>` },
+
+  { ch: 3, adv: true, target: () => document.getElementById("lockAutostart").closest(".panel"),
+    title: "Lab actions", body: `
+    <p><b>Lock: never autostart</b> makes sure no lab VM starts by itself with Windows.</p>
+    <p><b>Shut down all VMs</b> closes every running VM cleanly. <b>Stop dashboard</b> closes
+    this page and leaves the VMs as they are.</p>` },
+
+  { ch: 3, outro: true, label: "Tour complete", title: "That is the whole page", body: () => `
+    <p>The <b>Tutorial</b> button at the top right runs this tour again at any time.</p>
+    ${tour.adv0 ? "" : `<p>The page is back in its basic view. <b>Advanced</b> brings the lab
+      controls back.</p>`}
+    <div class="tour-note">More detail in the repository: <code>docs\\setup.md</code> for
+    building the lab, <code>docs\\implementation.md</code> for what each rule detects, and
+    <code>dashboard\\README.md</code> for this page.</div>` }
+];
+
+function tourChapterTiles() {
+  return `<div class="tour-chapters">${TOUR_CHAPTERS.map((c, n) => {
+    const count = TOUR_STEPS.filter(s => s.ch === n && !s.intro && !s.outro).length;
+    return `<button type="button" data-tour-ch="${n}">
+      <span class="n">${String(n + 1).padStart(2, "0")} &middot; ${esc(c.level)} &middot; ${count} steps</span>
+      <span class="t">${esc(c.name)}</span>
+      <span class="d">${esc(c.blurb)}</span></button>`;
+  }).join("")}</div>`;
+}
+
+// The endpoints this profile has, so the lean lab is not described with a machine it lacks.
+function tourEndpoints() {
+  const vms = (window.__last && window.__last.vms) || [];
+  const names = vms.filter(v => v.name !== "WAZUH-MANAGER").map(v => v.name);
+  return names.length ? names.join(", ") : "WAZUH-LINUX, WAZUH-WIN";
+}
+
+function tourWindowText() {
+  const s = window.__last && window.__last.health && window.__last.health.scoring;
+  const sec = s && s.windowSeconds;
+  if (!sec) return "short time windows";
+  return sec % 60 === 0 ? sec / 60 + "-minute windows" : Math.round(sec) + "-second windows";
+}
+
+// What the start step says when there is nothing to press: the lab is on its way up or down,
+// already running, or has no VMs to start.
+function tourLabIdle() {
+  const d = window.__last;
+  const seq = d && d.sequence;
+  if (seq && seq.running) {
+    return `<p>The lab is ${seq.kind === "up" ? "starting" : "shutting down"} right now. The bar
+      under the headline fills as each stage finishes, and <b>Cancel</b> stops it.</p>`;
+  }
+  const vms = d ? (d.vms || []).filter(v => v.found) : [];
+  if (vms.length && vms.every(v => v.state === "Running")) {
+    return `<p>The lab is already running, so <b>Bring the lab up</b> is greyed out.</p>
+      <p>When finished, press <b>Take the lab down</b>. It shuts the endpoints down first and the
+      manager last, and gives the memory back.</p>`;
+  }
+  return `<p><b>Bring the lab up</b> is greyed out while there is nothing it can start. Once the
+    lab's VMs exist, it starts them in order: the manager first, then the endpoints.</p>`;
+}
+
+const tour = { open: false, i: 0, adv0: false, y0: 0, mode: "plain", target: null, side: null,
+               settled: true, since: 0, lastY: 0, still: 0, calm: 0, raf: 0, nap: 0, back: null,
+               spot: "", place: "" };
+// Looked up once: the frame loop reaches for these on every frame.
+const tourBox = document.getElementById("tour"), tourCard = document.getElementById("tourCard");
+const tourSpotEl = tourBox.querySelector(".tour-spot"), tourBlock = tourBox.querySelector(".tour-block");
+
+function tourFind(sel) {
+  if (!sel) return null;
+  let el = null;
+  try { el = typeof sel === "function" ? sel() : document.querySelector(sel); } catch (e) { el = null; }
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return r.width > 0 && r.height > 0 ? el : null;
+}
+
+// Whether a Try it can be tried now: its control is on the page and enabled, and the step's
+// own condition holds.
+function tourCanAct(step) {
+  const el = step.act && tourFind(step.act.sel);
+  return !!el && !el.disabled && (!step.act.ready || step.act.ready());
+}
+
+// What the frame goes round: the control to press while a Try it waits, what pressing it
+// changed once it has been pressed, and otherwise the part of the page the step is about.
+function tourAim(step) {
+  if (tour.mode === "act") return tourFind(step.act.spot || step.act.sel);
+  if (tour.mode === "done") {
+    return tourFind(step.act.after) || tourFind(step.act.spot || step.act.sel) || tourFind(step.target);
+  }
+  return tourFind(step.target);
+}
+
+// The Advanced view without the localStorage write setAdvanced makes: the tour borrows the
+// view, it does not change the preference.
+function tourView(on) {
+  document.body.classList.toggle("adv", on);
+  document.getElementById("advToggle").setAttribute("aria-pressed", on ? "true" : "false");
+}
+
+// The page must not scroll out from under the frame. The card's own text may still scroll.
+function tourHold(ev) {
+  if (!(ev.target.closest && ev.target.closest(".tour-body"))) ev.preventDefault();
+}
+
+// Keys and clicks are captured at the window, ahead of the page's own handlers, and only while
+// the tour is open.
+function tourKey(ev) {
+  const k = ev.key, sel = tourActSel();
+  if (k === "Escape") { ev.preventDefault(); ev.stopPropagation(); tourClose(); return; }
+  if (k === "ArrowRight") { ev.preventDefault(); if (tour.i < TOUR_STEPS.length - 1) tourGo(tour.i + 1); return; }
+  if (k === "ArrowLeft") { ev.preventDefault(); if (tour.i > 0) tourGo(tour.i - 1); return; }
+  const onAct = !!(sel && ev.target.closest && ev.target.closest(sel));
+  if (k === "Tab") {
+    // The card's buttons, and on a Try it step the control it asks for. Moved by hand every
+    // time: that control sits elsewhere in the page, so the browser's own order leaves the card.
+    const f = Array.from(tourCard.querySelectorAll("button")).filter(b => !b.disabled && b.offsetParent);
+    const aim = sel && tourFind(sel);
+    if (aim && !aim.disabled) f.unshift(aim);
+    if (!f.length) return;
+    ev.preventDefault();
+    const at = f.indexOf(onAct ? aim : document.activeElement), n = f.length;
+    f[at < 0 ? (ev.shiftKey ? n - 1 : 0) : (at + (ev.shiftKey ? n - 1 : 1)) % n].focus();
+    return;
+  }
+  const onButton = ev.target.closest && ev.target.closest("#tour button");
+  if (["PageDown", "PageUp", "Home", "End", "ArrowUp", "ArrowDown"].indexOf(k) >= 0 ||
+      (k === " " && !onButton && !onAct)) ev.preventDefault();
+}
+
+// Watches for the Try it control being pressed, deferred so the page's own handler has run by
+// the time the card changes its words.
+function tourClick(ev) {
+  const sel = tourActSel();
+  const hit = sel && ev.target.closest && ev.target.closest(sel);
+  if (hit && !hit.disabled) setTimeout(tourActed, 0);
+}
+
+const tourActSel = () => tour.mode === "act" ? TOUR_STEPS[tour.i].act.sel : null;
+const TOUR_LISTEN = [["wheel", tourHold, { passive: false }], ["touchmove", tourHold, { passive: false }],
+                     ["keydown", tourKey, true], ["click", tourClick, true], ["resize", () => tourWake()]];
+function tourListen(on) {
+  for (const [type, fn, opt] of TOUR_LISTEN) window[on ? "addEventListener" : "removeEventListener"](type, fn, opt);
+}
+
+function tourOpen(at) {
+  if (tour.open) return;
+  tour.open = true;
+  tour.adv0 = document.body.classList.contains("adv");
+  tour.y0 = window.scrollY;
+  tour.back = document.activeElement;
+  tour.spot = tour.place = "";
+  tourBox.hidden = false;
+  tourBox.classList.add("centered");
+  void tourBox.offsetWidth;
+  tourBox.classList.add("on");
+  tourListen(true);
+  tourGo(at || 0);
+  tour.raf = requestAnimationFrame(tourFrame);
+}
+
+function tourClose() {
+  if (!tour.open) return;
+  tour.open = false;
+  cancelAnimationFrame(tour.raf);
+  clearTimeout(tour.nap);
+  tour.nap = 0;
+  tourListen(false);
+  tourBox.classList.remove("on");
+  tourCard.classList.remove("show");
+  tourHole(null);
+  // setAdvanced rather than tourView: pressing Advanced on its Try it step saved the choice, and
+  // the page is meant to come back exactly as it was, stored preference included.
+  setAdvanced(tour.adv0);
+  // Back to where the reader was when they opened it, rather than wherever the last step was.
+  window.scrollTo({ top: tour.y0, behavior: SOFT ? "smooth" : "auto" });
+  setTimeout(() => { if (!tour.open) tourBox.hidden = true; }, SOFT ? 260 : 0);
+  const back = tour.back && document.contains(tour.back) ? tour.back : document.getElementById("tourBtn");
+  if (back && back.focus) back.focus({ preventScroll: true });
+}
+
+function tourGo(i) {
+  tour.i = Math.max(0, Math.min(TOUR_STEPS.length - 1, i));
+  const step = TOUR_STEPS[tour.i];
+  tourView(step.adv ? true : tour.adv0);
+  tourCard.classList.remove("show");
+  tour.mode = step.act ? (tourCanAct(step) ? "act" : "idle") : "plain";
+  tour.target = tourAim(step);
+  tour.side = null;
+  tour.settled = false;
+  tour.since = performance.now();
+  tour.still = 0;
+  tour.lastY = window.scrollY;
+  tourWake();
+  if (tour.target) tourReveal(tour.target);
+}
+
+// The control on a Try it step has been pressed. The card stays up and changes its words, and
+// the frame moves to whatever the press changed.
+function tourActed() {
+  if (!tour.open || tour.mode !== "act") return;
+  const step = TOUR_STEPS[tour.i];
+  tour.mode = "done";
+  tour.target = tourAim(step);
+  tour.side = null;
+  tour.place = "";
+  tourWake();
+  tourFill(tour.i);
+  const next = document.getElementById("tourNext");
+  try { next.focus({ preventScroll: true }); } catch (e) { next.focus(); }
+  // Something that opens out, such as a finding's working, is brought into view once it has.
+  if (step.act.reveal) {
+    setTimeout(() => {
+      if (tour.open && tour.mode === "done" && tour.target) tourReveal(tour.target);
+    }, 450);
+  }
+}
+
+// Brings a target into view below the sticky top bar, a little above centre so the card has
+// room beneath it. A target already fully visible stays where it is.
+function tourReveal(el) {
+  if (el.closest(".topbar")) return;
+  const r = el.getBoundingClientRect();
+  const top = document.querySelector(".topbar").getBoundingClientRect().bottom + 14;
+  const room = window.innerHeight - top - 14;
+  if (r.top >= top && r.bottom <= window.innerHeight - 14) return;
+  const lead = r.height < room ? Math.min((room - r.height) * 0.3, 120) : 0;
+  const max = document.documentElement.scrollHeight - window.innerHeight;
+  const y = Math.max(0, Math.min(max, window.scrollY + r.top - top - lead));
+  tourWake();
+  window.scrollTo({ top: y, behavior: SOFT ? "smooth" : "auto" });
+}
+
+// Every frame while anything moves. Once the frame and the card have held still for half a
+// second, four checks a second are enough to follow the page's own redraws, and the main
+// thread is left alone in between. Anything the tour itself moves wakes it straight away.
+function tourWake() {
+  tour.calm = performance.now();
+  if (!tour.open || !tour.nap) return;
+  clearTimeout(tour.nap);
+  tour.nap = 0;
+  tour.raf = requestAnimationFrame(tourFrame);
+}
+
+function tourFrame(now) {
+  if (!tour.open) return;
+  if (tourTrack(now)) tour.calm = now;
+  if (now - tour.calm < 500) tour.raf = requestAnimationFrame(tourFrame);
+  else tour.nap = setTimeout(() => { tour.nap = 0; tourFrame(performance.now()); }, 250);
+}
+
+// Moves the frame and the card to wherever the step's target is now, and says whether
+// anything had to move.
+function tourTrack(now) {
+  const step = TOUR_STEPS[tour.i];
+  // The page redraws parts of itself every few seconds, which replaces some of the nodes a
+  // step points at. Look the target up again rather than framing a node that has gone.
+  if (!tour.target || !tour.target.isConnected) tour.target = tourAim(step);
+  let r = null;
+  if (tour.target) {
+    const b = tour.target.getBoundingClientRect();
+    const shape = tour.mode === "act" ? step.act : step;
+    const pad = shape.pad != null ? shape.pad : tour.mode === "act" ? 6 : 8;
+    r = { left: b.left - pad, top: b.top - pad, width: b.width + 2 * pad, height: b.height + 2 * pad };
+  }
+  const moved = tourSpot(r, step);
+  if (tour.settled) return tourPlace(r, false) || moved;
+  if (Math.abs(window.scrollY - tour.lastY) > 0.5) { tour.lastY = window.scrollY; tour.still = 0; }
+  else tour.still++;
+  // The new card waits for the scroll to stop and the old one to fade.
+  if (!((tour.still >= 4 && now - tour.since > 180) || now - tour.since > 1100)) return true;
+  tour.settled = true;
+  tourFill(tour.i);
+  tourPlace(r, true);
+  return true;
+}
+
+function tourSpot(r, step) {
+  const g = r || { left: window.innerWidth / 2, top: window.innerHeight / 2, width: 0, height: 0 };
+  const shape = tour.mode === "act" ? step.act : step;
+  const radius = !r ? 14 : shape.radius != null ? shape.radius : tour.mode === "act" ? 10 : 14;
+  const acting = tour.mode === "act" && !!r;
+  const L = Math.round(g.left), T = Math.round(g.top), W = Math.round(g.width), H = Math.round(g.height);
+  const key = `${L},${T},${W},${H},${radius},${acting}`;
+  if (key === tour.spot) return false;
+  tour.spot = key;
+  tourBox.classList.toggle("centered", !r);
+  tourSpotEl.classList.toggle("act", acting);
+  const s = tourSpotEl.style;
+  s.left = L + "px";
+  s.top = T + "px";
+  s.width = W + "px";
+  s.height = H + "px";
+  s.borderRadius = radius + "px";
+  // The ripple starts 3px out and ends 18px out on every side.
+  s.setProperty("--sx", ((W + 36) / (W + 6)).toFixed(3));
+  s.setProperty("--sy", ((H + 36) / (H + 6)).toFixed(3));
+  tourHole(acting ? g : null);
+  return true;
+}
+
+// Cuts the Try it hole out of the click shield: the whole viewport, less the framed control,
+// filled even-odd so the inner rectangle is the part left open.
+function tourHole(g) {
+  if (!g) { tourBlock.style.clipPath = ""; return; }
+  const W = window.innerWidth, H = window.innerHeight;
+  const l = Math.round(g.left), t = Math.round(g.top);
+  const r = Math.round(g.left + g.width), b = Math.round(g.top + g.height);
+  tourBlock.style.clipPath = `polygon(evenodd, 0 0, ${W}px 0, ${W}px ${H}px, 0 ${H}px, 0 0, ` +
+    `${l}px ${t}px, ${r}px ${t}px, ${r}px ${b}px, ${l}px ${b}px, ${l}px ${t}px)`;
+}
+
+function tourFill(i) {
+  const step = TOUR_STEPS[i];
+  const ch = TOUR_CHAPTERS[step.ch];
+  const last = i === TOUR_STEPS.length - 1;
+  const m = tour.mode;
+  const trying = m === "act" || m === "done";
+  tourCard.classList.toggle("wide", !!step.wide);
+  tourCard.classList.toggle("last", last);
+  document.getElementById("tourChapter").textContent =
+    step.label || "Chapter " + (step.ch + 1) + " · " + ch.name;
+  const tag = document.getElementById("tourTag");
+  tag.hidden = !!step.label;
+  tag.textContent = trying ? "Try it" : ch.level;
+  tag.className = "tour-tag" + (trying ? " try" : ch.level === "Advanced" ? " adv" : "");
+  document.getElementById("tourCount").textContent =
+    String(i + 1).padStart(2, "0") + " / " + TOUR_STEPS.length;
+  document.getElementById("tourTitle").textContent = typeof step.title === "function" ? step.title(m) : step.title;
+  const body = document.getElementById("tourBody");
+  body.innerHTML = typeof step.body === "function" ? step.body(m) : step.body;
+  body.scrollTop = 0;
+
+  const todo = document.getElementById("tourDo");
+  todo.hidden = !trying;
+  todo.classList.toggle("done", m === "done");
+  todo.innerHTML = m === "done" ? `<span class="tick" aria-hidden="true"></span><span>Done</span>`
+    : m === "act" ? `<span class="ping" aria-hidden="true"></span><span>${step.act.say}</span>` : "";
+
+  // One bar per chapter, filled as far as this step. Built once so the widths animate.
+  const prog = document.getElementById("tourProgress");
+  if (!prog.children.length) {
+    prog.innerHTML = TOUR_CHAPTERS.map(c => `<span title="${esc(c.name)}"><i></i></span>`).join("");
+  }
+  TOUR_CHAPTERS.forEach((c, n) => {
+    const idx = TOUR_STEPS.map((s, k) => s.ch === n ? k : -1).filter(k => k >= 0);
+    const done = idx.filter(k => k <= i).length;
+    prog.children[n].firstChild.style.width = Math.round(100 * done / idx.length) + "%";
+  });
+
+  const next = document.getElementById("tourNext");
+  next.textContent = m === "act" ? "Skip" : i === 0 ? "Start the tour" : last ? "Finish" : "Next";
+  next.classList.toggle("skip", m === "act");
+  document.getElementById("tourPrev").disabled = i === 0;
+  document.getElementById("tourAgain").hidden = !last;
+}
+
+// Beside the target where there is room, trying the step's own preference first, then right,
+// left, below and above. Once placed, a card keeps its side for as long as it still fits there,
+// so a redraw underneath cannot make it hop from one side to the other.
+function tourPlace(r, fresh) {
+  const card = tourCard;
+  const step = TOUR_STEPS[tour.i];
+  const vw = window.innerWidth, vh = window.innerHeight, m = 14, gap = 20;
+  const cw = card.offsetWidth, ch = card.offsetHeight;
+  let x, y, a = 0, side;
+  if (!r) { side = "none"; x = (vw - cw) / 2; y = Math.max(m, (vh - ch) / 2); }
+  else if (vw < 720) { side = "none"; x = (vw - cw) / 2; y = vh - ch - m; }
+  else {
+    const v = { left: Math.max(r.left, 0), top: Math.max(r.top, 0),
+                right: Math.min(r.left + r.width, vw), bottom: Math.min(r.top + r.height, vh) };
+    const cx = (v.left + v.right) / 2, cy = (v.top + v.bottom) / 2;
+    const fits = {
+      right: v.right + gap + cw <= vw - m, left: v.left - gap - cw >= m,
+      bottom: v.bottom + gap + ch <= vh - m, top: v.top - gap - ch >= m
+    };
+    if (!fresh && tour.side && fits[tour.side]) side = tour.side;
+    else side = [step.place, "right", "left", "bottom", "top"].find(s => s && fits[s]) || "over";
+    const cX = n => Math.max(m, Math.min(vw - cw - m, n));
+    const cY = n => Math.max(m, Math.min(vh - ch - m, n));
+    if (side === "right")       { x = v.right + gap;     y = cY(cy - ch / 2); a = cy - y; }
+    else if (side === "left")   { x = v.left - gap - cw; y = cY(cy - ch / 2); a = cy - y; }
+    else if (side === "bottom") { y = v.bottom + gap;    x = cX(cx - cw / 2); a = cx - x; }
+    else if (side === "top")    { y = v.top - gap - ch;  x = cX(cx - cw / 2); a = cx - x; }
+    else { x = vw - cw - m; y = vh - ch - m; }
+  }
+  const len = side === "left" || side === "right" ? ch : cw;
+  const at = Math.round(Math.max(22, Math.min(len - 22, a)));
+  const key = `${Math.round(x)},${Math.round(y)},${side},${at}`;
+  if (!fresh && key === tour.place) return false;
+  tour.place = key;
+  tour.side = side;
+  if (fresh) card.classList.add("jump");
+  card.dataset.side = side;
+  card.style.setProperty("--x", Math.round(x) + "px");
+  card.style.setProperty("--y", Math.round(y) + "px");
+  card.style.setProperty("--a", at + "px");
+  if (!fresh) return true;
+  void card.offsetWidth;
+  card.classList.remove("jump");
+  card.classList.add("show");
+  const next = document.getElementById("tourNext");
+  try { next.focus({ preventScroll: true }); } catch (e) { next.focus(); }
+  return true;
+}
+
+(function wireTour() {
+  document.getElementById("tourBtn").addEventListener("click", () => tourOpen(0));
+  document.getElementById("tourNext").addEventListener("click", () => {
+    if (tour.i >= TOUR_STEPS.length - 1) tourClose(); else tourGo(tour.i + 1);
+  });
+  document.getElementById("tourPrev").addEventListener("click", () => tourGo(tour.i - 1));
+  document.getElementById("tourAgain").addEventListener("click", () => tourGo(0));
+  document.getElementById("tourClose").addEventListener("click", tourClose);
+  document.getElementById("tourBody").addEventListener("click", ev => {
+    const b = ev.target.closest("button[data-tour-ch]");
+    if (b) tourGo(TOUR_STEPS.findIndex(s => s.ch === Number(b.dataset.tourCh) && !s.intro));
+  });
+})();
 
 // ---- Lab access ------------------------------------------------------------------------
 // Fetched once when the gate opens rather than on the 3 second poll: the Wazuh password is an
