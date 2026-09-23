@@ -30,7 +30,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Same elevation check as Get-LabHost.ps1, but it asks rather than refusing.
+# Asks for elevation rather than refusing to start without it.
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 $script:IsElevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $script:IsElevated -and -not $NoElevate) {
@@ -1231,6 +1231,7 @@ td { padding: 3px 7px 3px 0; border-bottom: 1px solid #e4e4df; vertical-align: t
 td.n, th.n { text-align: right; padding-right: 7px; padding-left: 11px;
             font-variant-numeric: tabular-nums; white-space: nowrap; }
 th:last-child, td:last-child { padding-right: 0; text-align: right; }
+td.ep { white-space: nowrap; }
 .band { display: inline-block; font-size: 8pt; font-weight: 650; text-transform: uppercase;
         letter-spacing: .05em; padding: 1px 6px; border-radius: 999px; border: 1px solid #d9d9d4; }
 .band.elevated { color: #854f0b; background: #faeeda; border-color: #e6cfa6; }
@@ -1273,7 +1274,7 @@ h2, h3 { break-after: avoid; page-break-after: avoid; }
                 (& $esc $c.key), (& $esc $c.label), (& $esc $c.raw), $div, [double]$c.value, [double]$c.weight, [double]$c.contribution
         }
         $rules = foreach ($r in @($f.rules)) {
-            '<tr><td class=n>{0}</td><td class=n>{1}</td><td>{2}</td><td>{3}</td><td class=n>{4}</td><td class=n>{5}</td></tr>' -f
+            '<tr><td class=n>{0}</td><td class=n>{1}</td><td>{2}</td><td class=ep>{3}</td><td class=n>{4}</td><td class=n>{5}</td></tr>' -f
                 (& $esc $r.id), [int]$r.level, (& $esc $r.desc), (& $esc (@($r.agents) -join ', ')), (& $esc $r.tech), [int]$r.count
         }
         # The working the page shows beside the finding, in the same order. The export used to
@@ -1299,7 +1300,7 @@ h2, h3 { break-after: avoid; page-break-after: avoid; }
         $peers = @($wk.perAgent)
         $worst = if ($peers.Count -gt 1) {
             '<br>Scored per endpoint and led with the worst: ' + (& $esc ((@($peers | ForEach-Object {
-                '{0} {1:N1} ({2} alerts)' -f $_.agent, [double]$_.score, [int]$_.alerts })) -join ', ')) + '.'
+                '{0} {1:N1} ({2} alert{3})' -f $_.agent, [double]$_.score, [int]$_.alerts, $(if ([int]$_.alerts -ne 1) { 's' }) })) -join ', ')) + '.'
         } else { '' }
             # Stages rather than raw ATT&CK strings, because a stage can be established from a rule
         # id where the alert carries no ATT&CK metadata, and the score already counts it that way.
