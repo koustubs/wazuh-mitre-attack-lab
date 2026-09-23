@@ -438,6 +438,12 @@ times 1.30. The 90 second window before it scored 54.2 on boot noise alone, whic
 illustration of what a 0.220 average precision model is and is not worth. Findings export
 produced a three page PDF of both.
 
+**The baseline, live, 23 September.** Once the Linux endpoint was past its 24 window warm-up,
+rule 100112 kept full weight at 18 and 19 prior occurrences and was discounted as routine at 21,
+and a cron rule it had produced three times was counted as novel. The findings export had not
+kept up with the baseline layer and printed base and chain only; it now prints the same working
+as the page. Detail in `evidence/validation-status.md` section 9.
+
 **Still open:**
 
 - Windows still needs a supplied ISO. Ubuntu does not: `Get-LabImage.ps1` fetches the cloud

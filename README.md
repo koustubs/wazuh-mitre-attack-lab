@@ -155,13 +155,19 @@ scores permanently worse than a quiet one. The manager therefore keeps a baselin
 ever produced, and when in the day it usually produces them. Severity is then measured against
 that endpoint rather than against a constant.
 
-Two behaviours come out of it. A rule this endpoint has never produced counts for more than the
-fifth occurrence of one it produces daily. And a rate sitting inside this endpoint's normal band
-for this hour is discounted, which is what separates one person's daily mistake from the same
+Two behaviours come out of it. A rule this endpoint has produced three times or fewer counts for
+more than one it produces every day. And a rate sitting inside this endpoint's normal band for
+this hour is discounted, which is what separates one person's daily mistake from the same
 signature on a machine that has never seen it.
 
 Until an endpoint has 24 completed windows behind it the fixed constants stand, and the panel
 says which mode it is in.
+
+On the live lab, once the Linux endpoint was past that point, its account creation rule 100112
+kept full weight while the endpoint had produced it 18 and 19 times, and was discounted with the
+endpoint's routine sudo and SSH session rules once it passed 20. A cron rule it had produced
+three times was counted as novel. [Validation status](evidence/validation-status.md) section 9
+has the windows.
 
 It is measured, and on this data it does not pay for itself. On the same eight folds, each
 network treated as one endpoint with one baseline warmed on its own first 24 windows, severity

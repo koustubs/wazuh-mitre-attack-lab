@@ -6,7 +6,8 @@ carries account names and addresses; this file is the summary that can be commit
 Sections 1 and 3 were verified on 11 September 2026, against Wazuh 4.14.7 and OpenSearch
 Dashboards 2.19.5, and the date is the verification rather than the last edit. Sections 2 and 4
 were run again on 23 September 2026, on the same versions, against the full profile as the
-current scripts build it. Section 6 lists what has changed since and has not been re-run.
+current scripts build it, and section 9 records the per-endpoint baseline on that lab the same
+day. Section 6 lists what has changed since and has not been re-run.
 
 ## 1. Rule checks, synthetic
 
@@ -165,7 +166,8 @@ follows has not been re-run or exercised since it changed.
   section 2 of the architecture notes. The detection cases in section 2 here ran on the full
   profile.
 - The dashboard reads alerts from the indexer rather than from a log tail, and scores each
-  endpoint against its own baseline. Section 3 covers the presentation path as it was.
+  endpoint against its own baseline. Section 9 covers the baseline on the live lab. Section 3's
+  check of the Wazuh dashboard predates both changes.
 
 ## 7. Retention fix, 22 September 2026
 
@@ -213,3 +215,44 @@ nothing until it returned. The first-logon log now says so before it starts.
 
 The six detection cases, their comparisons and the Windows frequency edge case then ran on this
 build. The results are in sections 2 and 4.
+
+## 9. Adaptive scoring on the live lab, 23 September 2026
+
+Read from the lab dashboard's own state on the full profile, after the runs in section 2. By
+then the Linux endpoint had 25 completed windows behind it, one more than the 24 a baseline needs
+before it applies, and the Windows endpoint had 11.
+
+**Routine.** A rule is routine once the endpoint has produced it at least 20 times and it is
+firing at about the endpoint's usual rate for that hour of the day. S2's comparison ran on the
+Linux endpoint five times, five minutes apart from 08:27 to 08:47 UTC, so rule 100112 fired once
+in each of five consecutive windows.
+
+| Window, UTC | 100112 seen before it | Rules discounted as routine | Multiplier | Base | Severity |
+| --- | --- | --- | --- | --- | --- |
+| 08:30 | 18 | 5402, 5501, 5502, 5715 | x0.755, on 70% of the alerts | 56.0 | 42.3 |
+| 08:35 | 19 | 5402, 5501, 5502, 5715 | x0.755, on 70% of the alerts | 56.0 | 42.3 |
+| 08:45 | 21 | the same four, plus 100112, 5901 and 5903 | x0.65, on all of them | 56.0 | 36.4 |
+
+In the first two, 100112 kept its full weight while the endpoint's sudo and SSH session rules
+were discounted around it. By 08:45 it had passed 20 and was discounted with them. The panel
+leads each window with its worst endpoint, and at 08:40 that was the manager, so the Linux
+endpoint's working for that window was not read.
+
+**Novelty.** S3 then ran on the Linux endpoint at 08:51. Its rule 100113 had fired there three
+times, all in the section 2 runs, which is at the novelty limit. Read two and a half minutes
+into the window, it was counted as novel along with the file deletion alert 553: x1.056 on the
+22% of the alerts that were novel, x0.728 routine on the rest, base 51.9, severity 39.8.
+
+**Warm-up.** The Windows endpoint, at 11 of 24 windows, was scored on the fixed constants with
+both multipliers at 1, including its own S2 comparison at 08:47.
+
+The lab has one Linux endpoint, so the same rule on a second endpoint that had never produced it
+was not tried. The nearest case here is 100112 on this endpoint before it reached 20.
+
+**The findings export.** The dashboard wrote a ten page PDF of eight findings from the same
+state. Reading it showed the export had not kept up with the baseline layer. It printed the base
+and the chain multiplier only, so a discounted window would have shown a base, no multiplier and
+a lower severity. It named no endpoint, its rule table did not say which endpoint each alert came
+from, and its chain formula was not the one the scorer uses. It now prints the same working as
+the page. That version was checked by running the export function against the saved state, not
+yet from a running dashboard.
