@@ -87,24 +87,24 @@ write is off.
 The other two custom rules, 100100 and 100110, each match a single failed logon at level 3. The
 S1 rules count them.
 
-Every case was run twice on live endpoints and all six detected, with the ATT&CK mapping resolved
-from the technique ID. Each S1 case also ran a benign single-failure comparison: across eight S1
-accounts, four attack runs alerted and four benign runs stayed silent. That discrimination is the
-result the lab exists to produce.
+On 23 September 2026, on the full profile as the current scripts build it, every case was run
+twice on live endpoints and all six detected both times, with the ATT&CK mapping resolved from
+the technique ID. Each S1 case also ran a benign comparison of one failed logon instead of six:
+across eight S1 runs, the four attacks alerted at level 10 and the four comparisons did not.
 
-Alerts reached the indexer in roughly five to seven seconds, with the ATT&CK technique, tactic
-and ID stored as searchable fields. Retention is 90 days. The frequency rules were also tested at
-their edges: the 120 second window genuinely expires, and counting is per agent, so the rule will
-not correlate one campaign spread across several machines.
-
-All of that was verified on 11 September 2026. The packaging work since changed how the lab is
-built and how the dashboard reads it, and none of it has been re-run against a lab built the new
-way. [Validation status](evidence/validation-status.md) is the record, including what that
-leaves open.
+A single-event rule's alert is timestamped 2 to 8 seconds after its run starts. The S1 composites
+take 10 to 26 seconds, which is the time the scenario spends generating six failures. Indexing
+adds 3.4 to 7.5 seconds, median 5.1. Every detection reached the indexer with the ATT&CK
+technique, tactic and ID stored as searchable fields. Retention is 90 days. The frequency rules
+were tested at their edges: the 120 second window expires on both, and the Linux rule counts per
+agent, so it will not correlate one campaign spread across several machines.
 
 S2 and S3 report observed activity for an analyst to judge, because account creation and
-scheduled jobs are also normal administration. The rules cover three behaviours by design, and
-coverage claims stay limited to these six cases.
+scheduled jobs are also normal administration. Their comparison runs perform the same action and
+record it as approved, and the rules alert on it exactly as on the attack, because nothing in the
+event carries the approval. The rules cover three behaviours by design, and coverage claims stay
+limited to these six cases. [Validation status](evidence/validation-status.md) is the record,
+including what is still open.
 
 ## Does a model beat the rules?
 

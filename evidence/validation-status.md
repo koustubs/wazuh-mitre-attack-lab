@@ -3,11 +3,10 @@
 What has been verified, how, and what has not. Raw run output stays out of Git because it
 carries account names and addresses; this file is the summary that can be committed.
 
-The results in sections 1 to 4 were verified on 11 September 2026, against Wazuh 4.14.7 and OpenSearch
-Dashboards 2.19.5, and the date is the verification rather than the last edit. The packaging
-work since then changed how the lab is built and how the dashboard reads it; none of those
-results have been re-run against a lab built the new way, and section 6 says what that leaves
-open.
+Sections 1 and 3 were verified on 11 September 2026, against Wazuh 4.14.7 and OpenSearch
+Dashboards 2.19.5, and the date is the verification rather than the last edit. Sections 2 and 4
+were run again on 23 September 2026, on the same versions, against the full profile as the
+current scripts build it. Section 6 lists what has changed since and has not been re-run.
 
 ## 1. Rule checks, synthetic
 
@@ -21,20 +20,38 @@ no rules loaded.
 
 ## 2. Live detection, six cases
 
-Every case run twice on real endpoints. All six detected with the ATT&CK mapping resolved from
-the technique ID.
+Run on 23 September 2026 from the dashboard, against the full profile. Every case ran twice as
+an attack and at least once as its comparison, and all six detected on both attack runs, with
+the ATT&CK mapping resolved from the technique ID.
 
-| Case | Rule | Level | ATT&CK |
-| --- | --- | --- | --- |
-| S1 Windows, repeated failed logons | 100101 | 10 | T1110.001 Password Guessing |
-| S2 Windows, local account created | 100102 | 6 | T1136.001 Local Account |
-| S3 Windows, scheduled task created | 100103 | 6 | T1053.005 Scheduled Task |
-| S1 Linux, repeated SSH failures | 100111 | 10 | T1110.001 Password Guessing |
-| S2 Linux, local account created | 100112 | 6 | T1136.001 Local Account |
-| S3 Linux, cron path modified | 100113 | 6 | T1053.003 Cron |
+| Case | Rule | Level | ATT&CK | Alert after the run started |
+| --- | --- | --- | --- | --- |
+| S1 Windows, repeated failed logons | 100101 | 10 | T1110.001 Password Guessing | 10.8 s, 13.6 s |
+| S2 Windows, local account created | 100102 | 6 | T1136.001 Local Account | 4.3 s, 6.7 s |
+| S3 Windows, scheduled task created | 100103 | 6 | T1053.005 Scheduled Task | 4.7 s, 6.6 s |
+| S1 Linux, repeated SSH failures | 100111 | 10 | T1110.001 Password Guessing | 26.0 s, 20.0 s |
+| S2 Linux, local account created | 100112 | 6 | T1136.001 Local Account | 2.0 s, 3.1 s |
+| S3 Linux, cron path modified | 100113 | 6 | T1053.003 Cron | 2.4 s, 2.5 s |
 
-Each S1 scenario also ran a benign single-failure comparison. Across all eight S1 accounts, four
-attack runs alerted and four benign runs stayed silent.
+The times run from the dashboard accepting the run to the alert's own timestamp, so they include
+the scenario's work. For S1 that is six failures, one second apart on Windows and two to four on
+Linux. The manager's clock was 1.4 seconds ahead of the host's, which the figures do not correct.
+
+The run produced 59 alerts from the lab's rules in the manager's `alerts.json`, detections and
+the base alerts under S1 together. All 59 were found in the indexer, and every detection carried
+its ATT&CK technique, tactic and ID there.
+
+**The comparisons.** S1's comparison is one failed logon instead of six. On both endpoints and on
+both runs it produced the single base alert, 100100 or 100110 at level 3, and no composite:
+across the eight S1 runs, the four attacks alerted at level 10 and the four comparisons did not.
+S2's and S3's comparison is the same action recorded as approved. The approval is in the
+scenario's own record and not in the event, so the rule cannot see it, and both comparisons
+alerted exactly as the attacks did. That is the reason S2 and S3 report activity for an analyst
+to judge rather than claim an attack.
+
+On 11 September the same six cases ran twice each on the lab as it was then built, with the same
+result: all six detected, and across eight S1 accounts four attacks alerted and four benign runs
+stayed silent.
 
 ## 3. Dashboard presentation path
 
@@ -97,23 +114,45 @@ leaving for someone to discover.
 
 Reproduce with `tests/s1-burst.sh` on an endpoint and `tests/query-frequency.sh` on the manager.
 
+**The window expires on Windows too, 23 September 2026.** Rule 100101 is also frequency 6 within
+120 seconds, keyed on the account and its domain. `tests/s1-burst.ps1` ran nine failures against
+one new local account, in three groups of three. The first two groups were 142 seconds apart, so
+no window held six and nothing fired. The third started 106 seconds after the second,
+the window then held six, and 100101 fired on the sixth, replacing that event's base alert as
+100111 does.
+
+| Phase | Failures | Gap before it | Base alerts | Composite |
+| --- | --- | --- | --- | --- |
+| A | 3 | n/a | 3 | none |
+| B | 3 | 142s | 6 | none |
+| C | 3 | 106s | 8 | fires |
+
+The stock ruleset constrains the spacing. Rules 60204 and 60205 are frequency 8 within 240
+seconds on the logon's source address, and a local network logon records that address as "-",
+so every failure on the endpoint shares it whatever the account. Once any 240 second span holds
+eight, the event goes to 60204 instead of 100100 and 100101 never counts it. Groups A and C were
+254 seconds apart, no 240 second span held more than six, and 60204 did not fire.
+
+The per-agent test cannot be repeated on Windows. 100101 keys on the account's domain as well as
+its name, and a local account's domain is the computer's name, so the same account name on two
+endpoints is already two keys before per-agent counting applies. It needs a domain account, and
+the lab has no domain.
+
 ## 5. Not verified
 
-- The same two edge cases on the Windows rule 100101. The mechanism under test belongs to
-  `wazuh-analysisd` and is shared by both rules, but rule 100101 keys on different fields and has
-  not been exercised this way.
-- Behaviour when the manager is under sustained load. All timings were measured on an idle lab.
+- Whether 100101 counts per agent. With local accounts the domain already separates endpoints,
+  so this needs a domain account (section 4).
+- Sustained load on the full profile. Load was measured once on the lean profile, in section 2
+  of the architecture notes; the timings in section 2 here are from an otherwise idle lab.
 - Anything outside S1 to S3. The rule set covers three behaviours by design and coverage claims
   should stay limited to the table in section 2.
 
 ## 6. Changed since these were verified
 
-None of section 1 to 4 has been re-run against a lab built the way the current scripts build
-one. The detections and the rules are untouched, so the results should hold, but "should" is
-not "did" and this is the list of what a re-run would be covering.
+Sections 2 and 4 were re-run on 23 September against a lab built the current way, on a Linux
+endpoint booted from the Ubuntu cloud image and a Windows endpoint reached over OpenSSH. What
+follows has not been re-run or exercised since it changed.
 
-- The Ubuntu guests now boot a cloud image and configure themselves from cloud-init. The
-  previous guests were installed from an ISO. Same release, different image.
 - The VirtualBox backend has never built a lab. Every result here was measured on Hyper-V.
   Both backend modules define the same seventeen functions with the same parameter names and the
   same mandatory arguments, and both return the same fields from `Get-LabVmInfo` and
@@ -121,13 +160,10 @@ not "did" and this is the list of what a re-run would be covering.
   `Get-LabNetworkInfo` and `Test-LabNetworkConflict`, have run against VirtualBox 7.2.6 on the
   build host and answer correctly. The write paths, which create the network and the VMs, have
   not been run.
-- The Windows endpoint is reached over OpenSSH rather than PowerShell Direct, which is what
-  removed the obstacle to the two 100101 edge cases above. They are still not done.
-- The manager is tuned after install: indexer heap sized to the profile, vulnerability
-  detection off, syscollector lengthened. The five to seven second alert latency in section 2
-  was measured before any of that.
 - The lean profile gives the manager 4 GB, below Wazuh's published recommendation for an
-  all-in-one deployment. Nothing here was measured on it.
+  all-in-one deployment. It was measured separately, idle and under load, and the figures are in
+  section 2 of the architecture notes. The detection cases in section 2 here ran on the full
+  profile.
 - The dashboard reads alerts from the indexer rather than from a log tail, and scores each
   endpoint against its own baseline. Section 3 covers the presentation path as it was.
 
@@ -174,3 +210,6 @@ error.
 
 OpenSSH Server's capability install took five and a half minutes on Windows 11 25H2 and wrote
 nothing until it returned. The first-logon log now says so before it starts.
+
+The six detection cases, their comparisons and the Windows frequency edge case then ran on this
+build. The results are in sections 2 and 4.

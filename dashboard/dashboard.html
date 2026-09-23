@@ -1161,9 +1161,10 @@ function renderScenarios(data) {
       <span class="actions">${buttons}</span>
     </div>`;
   }).join("") +
-  `<div class="faint" style="margin-top:9px">The benign run is the comparison case: one failed logon instead of six, or
-   the same action recorded as approved. It should stay below the alert threshold, which is what makes the attack run mean
-   anything. Both need the one-time setup on Linux.</div>`;
+  `<div class="faint" style="margin-top:9px">The benign run is the comparison case. For S1 it is one failed logon instead
+   of six, which stays below the rule's threshold. For S2 and S3 it is the same action recorded as approved; the rule cannot
+   see the approval and alerts the same, which is why those two report activity for an analyst to judge. Both modes need the
+   one-time setup on Linux.</div>`;
 }
 
 function alertLimit() {

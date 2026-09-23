@@ -1,6 +1,6 @@
 # Project status and handover
 
-**Updated:** 21 September 2026
+**Updated:** 23 September 2026
 **State:** Steps 1 to 4 complete. Lab is built and running. All six detection cases proven on
 live endpoints, alerts confirmed rendering in the dashboard, and the frequency rule edge cases
 characterised. A fifth step beyond the brief, detection modelling, has been measured and
@@ -347,6 +347,7 @@ wazuh-threat-detection/
                                 with no lab up, and checks the severity path end to end
     test_adaptive_scoring.py    the baseline layer and the live baseline helper, offline
     s1-burst.sh                 controlled failure bursts for frequency edge cases
+    s1-burst.ps1                the same on the Windows endpoint
     query-frequency.sh          reads back which rule fired, on which agent
   evidence/
     validation-status.md        what is verified and what is not, committable
@@ -391,12 +392,10 @@ each step is a script that does one job and reports what it did.
 
 **Not done:**
 
-- The two frequency edge cases on the Windows rule 100101. They are done for the Linux rule
-  100111, and the mechanism under test belongs to `wazuh-analysisd` and is shared by both, but
-  100101 keys on different fields and has not been exercised this way. The obstacle used to be
-  that the Windows endpoint was reachable only through Hyper-V PowerShell Direct; it now runs
-  OpenSSH like the Linux one, so nothing is in the way except doing it.
-- All timings were measured on an idle lab. Behaviour under sustained load is unknown.
+- Whether the Windows rule 100101 counts per agent. Its window expiry was verified on 23
+  September; the per-agent test needs a domain account, because a local account's domain is the
+  computer's name and already separates endpoints.
+- Sustained load was measured once, on the lean profile. The full profile has not been loaded.
 - The rule set covers three behaviours by design. Coverage claims should stay limited to the six
   cases in the results table.
 
