@@ -67,12 +67,22 @@ function Invoke-VBox {
     $exe = Get-VBoxManage
     if (-not $exe) { throw 'VBoxManage.exe was not found. Install VirtualBox, or set backend to hyperv in lab.config.json.' }
 
-    $out = & $exe @Arguments 2>&1
-    $code = $LASTEXITCODE
+    # Relaxed for the call. VBoxManage writes its progress bar to stderr, and Windows PowerShell
+    # turns each stderr line of a redirected native command into an error record, which under a
+    # caller's Stop is a terminating error. A clone that completed was reported as a failure
+    # that way, so the exit code decides.
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = @(& $exe @Arguments 2>&1 | ForEach-Object { "$_" })
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $saved
+    }
     if ($ThrowOnError -and $code -ne 0) {
         throw ('VBoxManage {0} failed: {1}' -f ($Arguments -join ' '), (($out | Out-String) -replace '\s+', ' ').Trim())
     }
-    [ordered]@{ Code = $code; Output = @($out | ForEach-Object { "$_" }) }
+    [ordered]@{ Code = $code; Output = $out }
 }
 
 function Get-VBoxVmProperties {
@@ -473,14 +483,35 @@ function Resize-LabVmDisk {
     Invoke-VBox -ThrowOnError -Arguments @('modifymedium', 'disk', $Path, '--resize', "$($SizeGb * 1024)") | Out-Null
 }
 
+function Close-VBoxMedium {
+    <#
+        Drops a disk from VirtualBox's media registry and leaves the file alone. clonemedium
+        registers both disks it touches, and the registration outlives the file: a disk deleted
+        and cloned again at the same path was refused as a duplicate of the one still registered
+        there. The published VMDK carries no UUID of its own, so its registration also becomes
+        inaccessible the next time VirtualBox starts. Not thrown on, because a path that was
+        never registered is the usual case.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    Invoke-VBox -Arguments @('closemedium', 'disk', $Path) | Out-Null
+}
+
 function ConvertTo-LabBootDisk {
     <#
         The published VMDK is stream-optimised, which VirtualBox boots but will not resize.
         Cloning it to a VDI once makes every guest's copy growable to the profile's disk size.
+        Neither disk stays registered afterwards. The VDI is a template the guests clone, not a
+        disk any VM attaches.
     #>
     param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Destination)
+    Close-VBoxMedium -Path $Destination
     if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Force }
-    Invoke-VBox -ThrowOnError -Arguments @('clonemedium', 'disk', $Source, $Destination, '--format', 'VDI') | Out-Null
+    try {
+        Invoke-VBox -ThrowOnError -Arguments @('clonemedium', 'disk', $Source, $Destination, '--format', 'VDI') | Out-Null
+    } finally {
+        Close-VBoxMedium -Path $Source
+        Close-VBoxMedium -Path $Destination
+    }
 }
 
 function Copy-LabBootDisk {
@@ -490,8 +521,13 @@ function Copy-LabBootDisk {
         attached. clonemedium writes a new UUID.
     #>
     param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Destination)
+    Close-VBoxMedium -Path $Destination
     if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Force }
-    Invoke-VBox -ThrowOnError -Arguments @('clonemedium', 'disk', $Source, $Destination, '--format', 'VDI') | Out-Null
+    try {
+        Invoke-VBox -ThrowOnError -Arguments @('clonemedium', 'disk', $Source, $Destination, '--format', 'VDI') | Out-Null
+    } finally {
+        Close-VBoxMedium -Path $Source
+    }
 }
 
 function Get-LabBootDiskExtension { '.vdi' }

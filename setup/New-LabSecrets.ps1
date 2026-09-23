@@ -224,7 +224,7 @@ $needsWindowsSeed = @(Get-LabVms).Keys | Where-Object {
     (Get-LabConfig).vms.$_.os -eq 'windows'
 }
 if ($needsWindowsSeed) {
-    Write-Host 'the lab has to be rebuilt. Next: New-LabSeeds.ps1, then New-WindowsSeed.ps1.'
+    Write-Host 'the lab has to be rebuilt. Next: Get-LabImage.ps1, then New-LabSeeds.ps1 and New-WindowsSeed.ps1.'
 } else {
-    Write-Host 'the lab has to be rebuilt. Next: New-LabSeeds.ps1.'
+    Write-Host 'the lab has to be rebuilt. Next: Get-LabImage.ps1, then New-LabSeeds.ps1.'
 }

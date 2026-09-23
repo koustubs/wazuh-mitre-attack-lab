@@ -157,8 +157,13 @@ try {
     if (-not $gpg) {
         $signatureState = 'not checked, gpg is not installed on this host'
     } else {
-        $verify = & $gpg.Source --verify $sigPath $sumsPath 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        # gpg reports on stderr even when the signature is good, and under Stop the first line
+        # of it would end this block as though the download had failed. The exit code decides.
+        $ErrorActionPreference = 'Continue'
+        $verify = @(& $gpg.Source --verify $sigPath $sumsPath 2>&1 | ForEach-Object { "$_" })
+        $gpgCode = $LASTEXITCODE
+        $ErrorActionPreference = 'Stop'
+        if ($gpgCode -eq 0) {
             $signatureState = 'good'
         } else {
             # A missing public key is not a bad signature, and refusing the image over it would

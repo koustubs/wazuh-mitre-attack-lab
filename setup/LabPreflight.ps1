@@ -122,12 +122,16 @@ function Get-LabPreflight {
     $virt = 'hardware virtualization'
     if ($cpu.vendor -match 'AMD') { $virt = 'SVM' } elseif ($cpu.vendor -match 'Intel') { $virt = 'VT-x' }
 
-    # 1. Elevation. Checked first because most of what follows cannot be read without it, and a
-    #    list full of "unknown" is a worse answer than one line saying why.
+    # 1. Elevation. Checked first because on Hyper-V most of what follows cannot be read without
+    #    it, and a list full of "unknown" is a worse answer than one line saying why. VirtualBox
+    #    answers an ordinary session, so there the reads go ahead and only building needs it:
+    #    New-Lab.ps1 creates a host-only interface, which is a host network adapter.
+    $readNeedsElevation = ($config.backend -eq 'hyperv')
     $checks += New-LabCheck -Id 'admin' -Label 'Administrator rights' `
-        -State $(if ($elevated) { 'pass' } else { 'fail' }) `
+        -State $(if ($elevated) { 'pass' } elseif ($readNeedsElevation) { 'fail' } else { 'warn' }) `
         -Detail $(if ($elevated) { 'This session is elevated.' }
-                  else { 'A hypervisor does not answer an ordinary session, so nothing below can be read.' }) `
+                  elseif ($readNeedsElevation) { 'Hyper-V does not answer an ordinary session, so nothing below can be read.' }
+                  else { 'VirtualBox answers an ordinary session, so the checks below are read. New-Lab.ps1 needs an elevated one to create the host-only interface.' }) `
         -Fix 'Run this again from an elevated PowerShell. Right click the Start button, then Terminal (Admin).'
 
     # 2. Hardware virtualization. HypervisorPresent is tested first, and the order matters: once
@@ -183,7 +187,7 @@ function Get-LabPreflight {
     # Everything past here needs the hypervisor to answer, so the VMs are read once and reused
     # rather than paying for the lookup in four separate checks.
     $vmLookup = @{}
-    $vmReadable = ($elevated -and $backendUsable)
+    $vmReadable = (($elevated -or -not $readNeedsElevation) -and $backendUsable)
     if ($vmReadable) {
         foreach ($name in $vms.Keys) {
             try { $vmLookup[$name] = Get-LabVmInfo -Name $name } catch { $vmLookup[$name] = $null }
