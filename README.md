@@ -36,13 +36,17 @@ caps them at 8, the full profile at 11.5 GB and 16. Idle, the lean guests were m
 Hyper-V needs Windows Pro, Enterprise or Education. VirtualBox runs on Home as well, and on a
 machine that already has it. Nothing here installs a hypervisor. Windows 10 has not been tried.
 
-**The VirtualBox backend is written and has never built a lab.** Everything measured in this
-repository was measured on Hyper-V. Both backends are held to the same seventeen function contract
-and that contract is checked: the two modules define the same functions with the same parameter
-names and the same mandatory arguments, and return the same fields. The read paths, which report
-availability, VM state and the network, have run against VirtualBox 7.2 on the build host. The
-write paths, which create the network and the VMs, have not been run. Hyper-V is the tested path
-and VirtualBox is the one to expect to have to fix.
+**The VirtualBox backend has built and run the lean profile, not the full one.** On 23 September
+2026 the lean lab was built on VirtualBox 7.2.6 from a clean clone, and the three Linux detection
+cases fired through the dashboard ([validation status](evidence/validation-status.md) section 10).
+The Windows endpoint has not been built on VirtualBox, and the published figures were measured on
+Hyper-V. Both backends are held to the same seventeen function contract, and that contract is
+checked: the two modules define the same functions with the same parameter names and mandatory
+arguments, and return the same fields.
+
+That host also had Hyper-V enabled, so VirtualBox ran through the Windows Hypervisor Platform,
+which is slower, and the preflight warns about it. There the manager once stopped running for 392
+seconds during its install. A host without Hyper-V, such as Windows Home, has not been tried.
 
 `setup\Test-LabHost.ps1` answers all of this about the host before anything is built. It
 changes nothing, reports the virtualization setting under the name the CPU uses, and prints the

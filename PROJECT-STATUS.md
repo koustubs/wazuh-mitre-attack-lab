@@ -305,7 +305,7 @@ wazuh-threat-detection/
     LabIso.ps1                  ISO authoring over IMAPI2FS
     backends/
       hyperv.psm1               one contract, seventeen functions
-      virtualbox.psm1           the same seventeen; read paths run, write paths never
+      virtualbox.psm1           the same seventeen; lean profile built, Windows endpoint not
     .lab-secrets/               gitignored: keys, password, seed images
   manager/
     install-manager.sh          manager, indexer and dashboard pinned, and the firewall

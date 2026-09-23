@@ -7,7 +7,8 @@ Sections 1 and 3 were verified on 11 September 2026, against Wazuh 4.14.7 and Op
 Dashboards 2.19.5, and the date is the verification rather than the last edit. Sections 2 and 4
 were run again on 23 September 2026, on the same versions, against the full profile as the
 current scripts build it, and section 9 records the per-endpoint baseline on that lab the same
-day. Section 6 lists what has changed since and has not been re-run.
+day. Section 10 records the lean profile on VirtualBox. Section 6 lists what has changed since and
+has not been re-run.
 
 ## 1. Rule checks, synthetic
 
@@ -154,13 +155,8 @@ Sections 2 and 4 were re-run on 23 September against a lab built the current way
 endpoint booted from the Ubuntu cloud image and a Windows endpoint reached over OpenSSH. What
 follows has not been re-run or exercised since it changed.
 
-- The VirtualBox backend has never built a lab. Every result here was measured on Hyper-V.
-  Both backend modules define the same seventeen functions with the same parameter names and the
-  same mandatory arguments, and both return the same fields from `Get-LabVmInfo` and
-  `Get-LabNetworkInfo`. The read paths, `Test-LabBackendAvailable`, `Get-LabVmInfo`,
-  `Get-LabNetworkInfo` and `Test-LabNetworkConflict`, have run against VirtualBox 7.2.6 on the
-  build host and answer correctly. The write paths, which create the network and the VMs, have
-  not been run.
+- On VirtualBox only the lean profile has been built, in section 10. The Windows endpoint has not
+  been built on it, and sections 1 to 9 were measured on Hyper-V.
 - The lean profile gives the manager 4 GB, below Wazuh's published recommendation for an
   all-in-one deployment. It was measured separately, idle and under load, and the figures are in
   section 2 of the architecture notes. The detection cases in section 2 here ran on the full
@@ -254,5 +250,55 @@ state. Reading it showed the export had not kept up with the baseline layer. It 
 and the chain multiplier only, so a discounted window would have shown a base, no multiplier and
 a lower severity. It named no endpoint, its rule table did not say which endpoint each alert came
 from, and its chain formula was not the one the scorer uses. It now prints the same working as
-the page. That version was checked by running the export function against the saved state, not
-yet from a running dashboard.
+the page. That version was first checked by running the export function against the saved
+state, and has since run from a running dashboard in section 10.
+
+## 10. Lean profile on VirtualBox, 23 September 2026
+
+The lean profile was built from a clean clone on VirtualBox 7.2.6, on the same host as the
+Hyper-V lab. With Hyper-V enabled there, VirtualBox runs its guests through the Windows
+Hypervisor Platform rather than on the virtualization extensions directly, and the preflight
+reports that as a warning.
+
+Two Wazuh installs on the manager failed before one completed.
+
+- The first was interrupted with Ctrl+C after ten silent minutes. The installation assistant
+  answers an interrupt by asking whether to roll back, on the output `install-manager.sh` sends
+  to its log, so the question was never seen and the install waited on it. The script now says
+  before it starts that it prints nothing for 10 to 20 minutes, and runs the assistant with the
+  interrupt ignored.
+- In the second, while the indexer was starting for the first time, the guest stopped running
+  for 392 seconds. VirtualBox's log records a heartbeat missing for that long and the guest
+  kernel a 366 second soft lockup. systemd failed the indexer's start on its timeout and the
+  assistant removed everything it had installed. The indexer is now given 15 minutes to start.
+
+The third completed in about 15 minutes. The endpoint enrolled, and then, from the dashboard:
+
+| Case | Started, UTC | Lab rule | Raised, UTC |
+| --- | --- | --- | --- |
+| S1, SSH brute force | 12:59:37 | 100111, level 10 | 13:00:00 |
+| S2, local account | 13:00:46 | 100112, level 6 | 13:00:50 |
+| S3, cron path | 13:01:12 | 100113, level 6 | 13:01:14 |
+
+Each case performed the technique on the endpoint, and the alert came from the agent reading
+the events it left. A restart from the dashboard took the endpoint down through ACPI and started
+it again; SSH answered and the agent was Active 52 seconds after the request. The findings
+export wrote a six page PDF of four findings. VM CPU shows as unmeasured on this backend, because
+VirtualBox reports it only through a metrics collector armed per VM.
+
+The first findings on a new lab are its own installation: the manager's install window at 12:35
+scored 89.9 and the endpoint's enrolment at 12:50 scored 87.6, both critical, with neither
+endpoint past its warm-up.
+
+Defects found in this run, all fixed:
+
+- The coverage panel reported the rule file as unreadable, on both backends. The setup libraries
+  the dashboard loads turn on strict mode, and under it reading an element a rule does not have
+  throws. The first rule in the file has no `<mitre>` block.
+- Separators and dashes on the page came out as two characters each. Windows PowerShell read the
+  page, which has no byte order mark, in the ANSI code page.
+- VM uptime on VirtualBox read five and a half hours high. VirtualBox gives the start time in UTC
+  with no zone marker, and it was parsed as local time on a host at UTC+5:30.
+- Uptime was rounded to the nearest hour rather than down, on both backends.
+- `Install-LabAgents.ps1` stopped on scp's own error when a key was missing, instead of naming
+  the step that had not been run.

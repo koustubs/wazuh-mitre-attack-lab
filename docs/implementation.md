@@ -6,9 +6,10 @@ frequency rule edge cases are characterised. R1 to R5 are met.
 
 ## Results
 
-One Wazuh 4.14.7 manager and two enrolled agents, measured on Hyper-V. The VirtualBox backend is
-written and has never built a lab, so none of these results have been measured on it. Every alert
-below came from a real endpoint action, not a synthetic event.
+One Wazuh 4.14.7 manager and two enrolled agents, measured on Hyper-V. On VirtualBox only the lean
+profile has been built, and its three Linux cases fired there as well; see section 10 of
+`evidence/validation-status.md`. Every alert below came from a real endpoint action, not a
+synthetic event.
 
 | Case | Rule | Level | ATT&CK | Result |
 | --- | --- | --- | --- | --- |
