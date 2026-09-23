@@ -19,8 +19,8 @@ cannot find a public key. That is confusing rather than informative.
 
 ## Also needed on the host
 
-- Windows 10 21H2 or Windows 11, and an elevated PowerShell session for the steps that create
-  VMs.
+- Windows 11, and an elevated PowerShell session for the steps that create VMs. The lab was
+  built on 11 Pro 25H2. Windows 10 has not been tried.
 - A hypervisor: Hyper-V on Pro, Enterprise or Education, or VirtualBox 7.0 or later. Nothing
   here installs one. `setup\Test-LabHost.ps1` reports which are usable on this machine and
   prints the command for each.

@@ -47,7 +47,7 @@
       }
     },
     "WAZUH-WIN": {
-      "role": "Windows endpoint, agent 001",
+      "role": "Windows endpoint",
       "hostname": "WAZUH-WIN",
       "agentName": "wazuh-windows",
       "os": "windows",
@@ -60,7 +60,7 @@
       }
     },
     "WAZUH-LINUX": {
-      "role": "Linux endpoint, agent 002",
+      "role": "Linux endpoint",
       "hostname": "wazuh-linux",
       "agentName": "wazuh-linux",
       "os": "ubuntu",

@@ -85,7 +85,7 @@ The scorer does not feed alerts back into Wazuh, retrain itself, or trigger auto
 ```mermaid
 flowchart TB
     INTERNET["Internet<br/>Vendor packages, Ubuntu cloud image, public dataset"]
-    subgraph HOST["Windows host: 10 21H2 or 11"]
+    subgraph HOST["Windows 11 host"]
         BROWSER["Local browser"]
         HOSTAPI["Local dashboard server<br/>127.0.0.1:8077"]
         ADMIN["PowerShell, elevated<br/>Hyper-V or VirtualBox backend module"]
@@ -164,8 +164,7 @@ flowchart LR
     CREATE["New-Lab.ps1<br/>Network, VMs, boot disk and seed attached"]
     FIRST["First boot<br/>cloud-init applies account, key, hostname and address"]
     OS["Running guests, labadmin<br/>/etc/wazuh-lab/lab.env in place"]
-    MI["install-manager.sh<br/>Version gate, all-in-one install"]
-    FW["configure-firewall.sh<br/>22 and 443 to the host, 1514 per endpoint in the profile"]
+    MI["install-manager.sh<br/>Version gate, firewall, all-in-one install"]
     TUNE["tune-manager.sh<br/>Indexer heap, disabled modules, index retention"]
     MC["configure-manager.sh<br/>Deploy rules and validate analysisd"]
     KEYS[("Manager client.keys<br/>Per-endpoint key exports")]

@@ -21,8 +21,8 @@ move the lab onto a different network.
 | Linux endpoint | 1 GB, 1 vCPU, 16 GB disk | 1.5 GB, 2 vCPU, 20 GB disk |
 | Windows endpoint | absent | 4 GB, 2 vCPU, 64 GB disk |
 
-The host RAM figures are floors, measured on a host running nothing but the lab. A machine in
-everyday use wants headroom above them.
+Host RAM is what the guests can grow to between them: the lean profile starts them at 5 GB and
+caps them at 8, the full profile at 11.5 GB and 16. Whatever else the host runs comes on top.
 
 Memory is dynamic on Hyper-V, with the minimum and maximum above in `lab.config.json`, so an
 idle guest gives its unused pages back. VirtualBox has no equivalent and takes what it is

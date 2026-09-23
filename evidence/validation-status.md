@@ -115,10 +115,12 @@ not "did" and this is the list of what a re-run would be covering.
 - The Ubuntu guests now boot a cloud image and configure themselves from cloud-init. The
   previous guests were installed from an ISO. Same release, different image.
 - The VirtualBox backend has never built a lab. Every result here was measured on Hyper-V.
-  What has been checked is structural, and only that: both backend modules define the same
-  seventeen functions with the same parameter names and the same mandatory arguments, both return
-  the same fields from `Get-LabVmInfo` and `Get-LabNetworkInfo`, and `virtualbox.psm1` imports
-  cleanly on a host with no VirtualBox installed. Nothing has run `VBoxManage`.
+  Both backend modules define the same seventeen functions with the same parameter names and the
+  same mandatory arguments, and both return the same fields from `Get-LabVmInfo` and
+  `Get-LabNetworkInfo`. The read paths, `Test-LabBackendAvailable`, `Get-LabVmInfo`,
+  `Get-LabNetworkInfo` and `Test-LabNetworkConflict`, have run against VirtualBox 7.2.6 on the
+  build host and answer correctly. The write paths, which create the network and the VMs, have
+  not been run.
 - The Windows endpoint is reached over OpenSSH rather than PowerShell Direct, which is what
   removed the obstacle to the two 100101 edge cases above. They are still not done.
 - The manager is tuned after install: indexer heap sized to the profile, vulnerability

@@ -1,9 +1,9 @@
 # Threat detection with Wazuh and MITRE ATT&CK
 
 A small detection lab that runs on a single Windows machine. It stands up a Wazuh 4.14.7 manager
-and one or two endpoints as virtual machines, deploys six custom rules covering three attacker
-behaviours, and includes a local dashboard that runs the attacks, watches the alerts arrive and
-scores them.
+and one or two endpoints as virtual machines, deploys eight custom rules, six of them detections
+for three attacker behaviours, and includes a local dashboard that runs the attacks, watches the
+alerts arrive and scores them.
 
 Every detection is driven by a real action. The Linux brute force case stands up a throwaway
 `sshd` and drives real authentication at it; the Windows one calls `LogonUser` and asserts the
@@ -22,24 +22,27 @@ different project. The guests are Ubuntu and Windows.
 | Host RAM | 8 GB | 16 GB |
 | Free disk | 60 GB | 180 GB |
 | CPU | 4 to 8 cores with SVM or VT-x and SLAT | 8 or more, same features |
-| Host OS | Windows 10 21H2 or Windows 11 | same |
+| Host OS | Windows 11, built and tested on 11 Pro 25H2 | same |
 | Hypervisor | Hyper-V, or VirtualBox 7.0 or later | same |
 | Guests | manager and Linux endpoint | plus the Windows endpoint |
 | Detection cases | 3 of 6, Linux only | 6 of 6 |
 | Images to supply | none | a Windows 11 ISO |
 
-The RAM figures are floors rather than comfortable numbers. They were measured on a host
-running nothing but the lab, and a machine in everyday use wants headroom above them.
+Host RAM is what the guests can grow to between them: the lean profile starts them at 5 GB and
+caps them at 8, the full profile at 11.5 GB and 16. Idle, the lean guests were measured using
+2.7 GB. Whatever else the host runs comes on top. The measurements are in
+[section 2 of the architecture notes](docs/architecture/README.md#2-deployment-networks-and-trust-boundaries).
 
 Hyper-V needs Windows Pro, Enterprise or Education. VirtualBox runs on Home as well, and on a
-machine that already has it. Nothing here installs a hypervisor.
+machine that already has it. Nothing here installs a hypervisor. Windows 10 has not been tried.
 
 **The VirtualBox backend is written and has never built a lab.** Everything measured in this
 repository was measured on Hyper-V. Both backends are held to the same seventeen function contract
 and that contract is checked: the two modules define the same functions with the same parameter
-names and the same mandatory arguments, return the same fields, and `virtualbox.psm1` imports
-cleanly on a host with no VirtualBox installed. None of that exercises `VBoxManage`. Hyper-V is
-the tested path and VirtualBox is the one to expect to have to fix.
+names and the same mandatory arguments, and return the same fields. The read paths, which report
+availability, VM state and the network, have run against VirtualBox 7.2 on the build host. The
+write paths, which create the network and the VMs, have not been run. Hyper-V is the tested path
+and VirtualBox is the one to expect to have to fix.
 
 `setup\Test-LabHost.ps1` answers all of this about the host before anything is built. It
 changes nothing, reports the virtualization setting under the name the CPU uses, and prints the
@@ -64,15 +67,14 @@ one command that fixes each failure.
 
 Between the second block and the third the manager needs its packages installed, which is three
 scripts run over SSH, and the endpoints need enrolling. [`docs/setup.md`](docs/setup.md) is the
-whole thing, eight numbered steps, each one script that does one job and says what it did. It
-takes under an hour, most of which is the manager installing.
+whole thing: a preflight and eight numbered steps.
 
 Everything reads [`lab.config.json`](lab.config.json): addresses, VM names, memory, disk, the
 Ubuntu image and the Wazuh version. Change the subnet there and every script and both guest
 images follow.
 
-Nothing autostarts. VMs are created stopped and the only autostart value any of this code can
-write is off, because three VMs waking up on login is somebody else's RAM.
+Nothing autostarts. VMs are created stopped, and the only autostart value any of this code can
+write is off.
 
 ## What it detects
 
@@ -81,6 +83,9 @@ write is off, because three VMs waking up on login is somebody else's RAM.
 | S1 repeated failed logons, Windows and Linux | 100101 / 100111 | T1110.001 Password Guessing |
 | S2 local account creation, Windows and Linux | 100102 / 100112 | T1136.001 Local Account |
 | S3 scheduled task or cron job, Windows and Linux | 100103 / 100113 | T1053.005 / T1053.003 |
+
+The other two custom rules, 100100 and 100110, each match a single failed logon at level 3. The
+S1 rules count them.
 
 Every case was run twice on live endpoints and all six detected, with the ATT&CK mapping resolved
 from the technique ID. Each S1 case also ran a benign single-failure comparison: across eight S1
@@ -103,9 +108,10 @@ coverage claims stay limited to these six cases.
 
 ## Does a model beat the rules?
 
-Four of the six rules judge one event in isolation. The two S1 rules count repeated failures in a
-window, which is the only correlation in the set. So: does something reading a *run* of alerts do
-better, and does that something have to be a neural network?
+Four of the six detection rules judge one event in isolation. The two S1 rules count repeated
+failures in a window, which is the only correlation in the set. The question tested here is
+whether a model reading the whole run of alerts in a window does better, and whether that model
+needs to be a neural network.
 
 Tested on the [AIT Alert Data Set](https://zenodo.org/records/8263181), 2.6 million real Wazuh
 alerts from eight simulated enterprise networks, each with a labelled multi-step intrusion. Each
@@ -127,15 +133,13 @@ On this evidence a sequence model is not justified for this problem: within a fi
 window, which rules fired and how bursty they were carries the signal, and the order of arrival
 adds little on top of that.
 
-**The deployed model is the portable one, and it costs less than expected.** The full logistic
-has one column per AIT rule id, and this lab shares two signatures out of thirty one, so pointed
-at live alerts it would put nearly every one of them in the unknown column and return a
-confident number about nothing. The deployed row is the feature set that survives the move:
+**The deployed model is the portable one, at a small cost.** The full logistic has one column
+per AIT rule id, and this lab shares two signatures out of thirty one, so on live alerts nearly
+every one would land in the unknown column and its probability would mean nothing. The deployed row is the feature set that survives the move:
 eleven columns describing the shape and severity of a window, with no rule identity in them. It
 keeps 88% of the full model's average precision, beats the best single rule on all eight folds
 and the base rate on all eight folds, and the 0.031 it gives up has a spread of 0.035 across
-folds, which is to say the gap is smaller than the noise. It is actually ahead on 3 of the eight
-folds. Rule identity was worth less than it looked.
+folds, so the gap is within the fold-to-fold noise. It is ahead on 3 of the eight folds.
 
 Two caveats kept in the open. None of these is deployable as an alerting rule on its own: at the
 operating points measured here, catching half the intrusions costs false positives in the
@@ -146,9 +150,8 @@ measurement.
 
 ## Scoring that adjusts to the machine
 
-A fixed threshold treats every endpoint the same, which means the one that produces forty alerts
-on a normal Tuesday looks permanently worse than the one that produces four. So the manager keeps
-a baseline per endpoint: a robust centre and spread of its alert volume, which signatures it has
+A fixed threshold treats every endpoint the same, so an endpoint whose normal volume is high
+scores permanently worse than a quiet one. The manager therefore keeps a baseline per endpoint: a robust centre and spread of its alert volume, which signatures it has
 ever produced, and when in the day it usually produces them. Severity is then measured against
 that endpoint rather than against a constant.
 
@@ -157,26 +160,25 @@ fifth occurrence of one it produces daily. And a rate sitting inside this endpoi
 for this hour is discounted, which is what separates one person's daily mistake from the same
 signature on a machine that has never seen it.
 
-It refuses to guess. Until an endpoint has 24 completed windows behind it the fixed
-constants stand and the panel says so, because a baseline built from ten minutes of data is worse
-than no baseline.
+Until an endpoint has 24 completed windows behind it the fixed constants stand, and the panel
+says which mode it is in.
 
 It is measured, and on this data it does not pay for itself. On the same eight folds, each
 network treated as one endpoint with one baseline warmed on its own first 24 windows, severity
 against that baseline reaches 0.169 average precision on labelled intrusion windows against
 0.173 for the fixed constants: -0.0036 mean, -0.0024 median, better on 3 of 8 folds. Both
-severity arms sit below the raw model probability at 0.221. Two things that measurement cannot
+severity arms sit below the raw model probability on the same windows, 0.221. Two things that measurement cannot
 see: AIT alerts carry no ATT&CK tactic and none of this lab's rule ids, so the chain multiplier
 is 1.0 on every window in it, and a network is not an endpoint, so its baseline is warmed on the
-aggregate of a whole subnet rather than one machine's habits. The layer is shipped because the
-reasons it should help are structural and the measurement it has is a poor proxy for the case it
-was built for. It is not shipped as a result.
+aggregate of a whole subnet rather than one machine's habits. The layer ships on the structural
+argument for per-endpoint baselines, not on this measurement, which is a poor proxy for the case
+it was built for.
 
 ## Where things are
 
 | | |
 | --- | --- |
-| [`docs/setup.md`](docs/setup.md) | Build the lab. Eight steps. |
+| [`docs/setup.md`](docs/setup.md) | Build the lab: a preflight and eight steps. |
 | [`lab.config.json`](lab.config.json) | Addresses, sizes, versions. The one place they are written down. |
 | [`setup/`](setup/) | Preflight, secrets, image fetch, seeds, provisioning, enrolment, teardown. |
 | [`manager/`](manager/) | Manager install, rules, tuning. Copied to the guest and run there. |
