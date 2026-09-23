@@ -1008,11 +1008,20 @@ function Invoke-LabScenario {
             $sshArgs = @(
                 '-i', $Key, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no',
                 '-o', ('UserKnownHostsFile={0}' -f $NullDevice), '-o', 'ConnectTimeout=8',
+                '-o', 'LogLevel=ERROR',
                 ('{0}@{1}' -f $User, $Address),
                 ('sudo -n /usr/local/bin/lab-scenario {0} {1}' -f $Scenario, $Mode)
             )
-            $output = & ssh.exe @sshArgs 2>&1
-            if ($LASTEXITCODE -ne 0) {
+            # Relaxed for the call itself. Windows PowerShell turns each stderr line of a
+            # redirected native command into an error record, and under Stop the first one ends
+            # the job. Runs that succeed write to stderr as well: ssh announces the host key it
+            # adds to the null known-hosts file, and the wrapper warns when two S1 runs are
+            # close together. That reported completed runs as failed, so the exit code decides.
+            $ErrorActionPreference = 'Continue'
+            $output = @(& ssh.exe @sshArgs 2>&1 | ForEach-Object { "$_" })
+            $code = $LASTEXITCODE
+            $ErrorActionPreference = 'Stop'
+            if ($code -ne 0) {
                 throw ('the endpoint refused it: {0}' -f (($output -join ' ').Trim()))
             }
             ($output | Select-Object -Last 1)
@@ -1030,8 +1039,13 @@ function Invoke-LabScenario {
                 '-o', 'LogLevel=ERROR'
             )
             # Copied rather than pre-staged, so nothing has to be kept in sync on the guest.
-            $copy = & scp.exe @common $ScriptFile ('{0}@{1}:C:/Windows/Temp/lab-scenario.ps1' -f $User, $Address) 2>&1
-            if ($LASTEXITCODE -ne 0) { throw ('could not copy the driver across: {0}' -f (($copy -join ' ').Trim())) }
+            # Stop is relaxed around both native calls, for the reason given in the Linux branch:
+            # a line on stderr is not a failure, the exit code is.
+            $ErrorActionPreference = 'Continue'
+            $copy = @(& scp.exe @common $ScriptFile ('{0}@{1}:C:/Windows/Temp/lab-scenario.ps1' -f $User, $Address) 2>&1 | ForEach-Object { "$_" })
+            $code = $LASTEXITCODE
+            $ErrorActionPreference = 'Stop'
+            if ($code -ne 0) { throw ('could not copy the driver across: {0}' -f (($copy -join ' ').Trim())) }
 
             # Run it through powershell.exe rather than dot-sourcing it. That is the only form
             # that still honours the driver's own "#requires -RunAsAdministrator", and the
@@ -1042,8 +1056,11 @@ function Invoke-LabScenario {
             # whatever Remove-Item thought of the temporary file.
             $command += '; $code = $LASTEXITCODE; Remove-Item C:\Windows\Temp\lab-scenario.ps1 -Force -ErrorAction SilentlyContinue; exit $code'
 
-            $output = & ssh.exe @common ('{0}@{1}' -f $User, $Address) $command 2>&1
-            if ($LASTEXITCODE -ne 0) { throw ('the endpoint refused it: {0}' -f (($output -join ' ').Trim())) }
+            $ErrorActionPreference = 'Continue'
+            $output = @(& ssh.exe @common ('{0}@{1}' -f $User, $Address) $command 2>&1 | ForEach-Object { "$_" })
+            $code = $LASTEXITCODE
+            $ErrorActionPreference = 'Stop'
+            if ($code -ne 0) { throw ('the endpoint refused it: {0}' -f (($output -join ' ').Trim())) }
             ($output | Select-Object -Last 1)
         } -ArgumentList $LabSshKey, $LabSshUser, $LabVms[$VmName].Address, $scriptFile, $Scenario, ($Mode -eq 'comparison'), $LabSshNull | Out-Null
     }
