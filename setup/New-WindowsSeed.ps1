@@ -122,10 +122,13 @@ if (-not `$adapter) {
 
 # ---- OpenSSH Server ----------------------------------------------------------------------------
 
-Write-Step 'installing OpenSSH Server'
+# The capability comes from Windows Update. On 25H2 it took five and a half minutes and wrote
+# nothing until it returned, so the log says so first rather than appearing to stop here.
+Write-Step 'installing OpenSSH Server from Windows Update, which takes several minutes'
 `$capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server*' | Select-Object -First 1
 if (`$capability -and `$capability.State -ne 'Installed') {
     Add-WindowsCapability -Online -Name `$capability.Name | Out-Null
+    Write-Step 'OpenSSH Server installed'
 }
 Set-Service -Name sshd -StartupType Automatic
 Start-Service -Name sshd

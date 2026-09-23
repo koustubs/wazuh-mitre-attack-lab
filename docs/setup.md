@@ -276,7 +276,23 @@ it cannot read. See `dashboard/README.md`.
 ## 8. Checkpoint the endpoints
 
 S2 and S3 create local accounts and scheduled jobs. The scenario scripts clean up after
-themselves on every exit path, but a checkpoint is the reliable reset.
+themselves on every exit path, but a checkpoint is the reliable reset. Take it while the
+endpoints are shut down, so it holds a disk state and no saved memory, from an elevated prompt:
+
+```
+Checkpoint-VM -Name WAZUH-LINUX, WAZUH-WIN -SnapshotName clean
+```
+
+With VirtualBox:
+
+```
+VBoxManage snapshot WAZUH-LINUX take clean
+VBoxManage snapshot WAZUH-WIN take clean
+```
+
+The lean profile has no `WAZUH-WIN`. To go back, with the endpoint shut down,
+`Restore-VMSnapshot -VMName WAZUH-LINUX -Name clean` or
+`VBoxManage snapshot WAZUH-LINUX restore clean`.
 
 ---
 

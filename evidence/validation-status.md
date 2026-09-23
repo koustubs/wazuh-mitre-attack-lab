@@ -148,6 +148,27 @@ idempotent path: the policy was already there, matched what the script asks for,
 on the one alert index present. Creating a policy, attaching one to an unmanaged index, and
 every failure path are covered by the tests above and have not run on the manager.
 
-The full-profile detection re-run is still pending. The Windows endpoint did not survive being
-saved and restored: its console shows a UEFI boot failure and it reports no address, so it has
-to be rebuilt rather than resumed.
+## 8. Full profile, 23 September 2026
+
+The full profile was built and stood up end to end for the first time: three guests reachable
+over SSH and three agents Active, the manager as 000, `wazuh-linux` as 001 and `wazuh-windows`
+as 002.
+
+An earlier version of this file said the Windows endpoint had not survived a save and restore.
+That diagnosis was wrong. The UEFI boot failure on its console was the firmware falling back
+after nobody pressed a key at the DVD's boot prompt, and it had no address because Windows had
+never been installed. Three defects in the build were responsible, and none of them raised an
+error.
+
+- `New-WindowsSeed.ps1` cleared `$productKey` before testing `$ProductKey`. PowerShell variable
+  names are not case sensitive, so the two are one variable and `-ProductKey` had never taken
+  effect. Setup stopped on the product key page.
+- Windows media waits about five seconds at "Press any key to boot from CD or DVD" and then
+  hands back to the firmware. `setup/Start-WindowsInstall.ps1` now starts the VM and presses the
+  key through the backend's `Send-LabVmKey`.
+- The answer file set the locale only in the windowsPE pass, which covers the installer, so
+  OOBE stopped at its region and keyboard pages. It is now set in oobeSystem as well. This build
+  was taken past those two pages by hand, so that fix has not been through a build yet.
+
+OpenSSH Server's capability install took five and a half minutes on Windows 11 25H2 and wrote
+nothing until it returned. The first-logon log now says so before it starts.
