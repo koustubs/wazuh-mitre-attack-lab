@@ -757,7 +757,7 @@ function renderScoring(data) {
       <br>${sourceLine(s)}
     </div>`;
 
-  renderFindings(findings);
+  renderFindings(findings, s.adaptive || {});
 }
 
 // Where the alerts came from, whether all of them arrived, and how much history the baseline
@@ -799,7 +799,7 @@ function sourceLine(s) {
 // would replay the animation forever and collapse whatever somebody had just opened.
 let lastFindings = null;
 
-function renderFindings(findings) {
+function renderFindings(findings, adaptive) {
   const box = document.getElementById("findings");
   const sig = JSON.stringify(findings.map(f => [f.epoch, f.severity, f.alerts]));
   if (sig === lastFindings) return;
@@ -817,6 +817,7 @@ function renderFindings(findings) {
         <td class="n">${esc(r.id)}</td>
         <td class="n"><span class="lvl ${r.level >= 10 ? "hi" : ""}">${r.level}</span></td>
         <td>${esc(r.desc)}</td>
+        <td>${esc((r.agents || []).join(", "))}</td>
         <td class="n">${esc(r.tech || "")}</td>
         <td class="n">${r.count}</td></tr>`).join("");
 
@@ -840,16 +841,17 @@ function renderFindings(findings) {
       wk.chained
         ? `&times;${wk.chain.toFixed(4)} chain, because credential access and persistence both
            appear on this endpoint`
-        : `&times;1 no chain: this window shows one stage on any single endpoint`,
+        : `&times;1 no chain: credential access and persistence do not both appear on this
+           endpoint`,
       wk.novelty > 1
         ? `&times;${wk.novelty.toFixed(4)} novelty, on
-           ${Math.round(100 * wk.novelShare)}% of the alerts being signatures this endpoint has
-           not produced before`
+           ${Math.round(100 * wk.novelShare)}% of the alerts being signatures this endpoint had
+           produced ${adaptive.noveltySeen} times or fewer`
         : null,
       wk.routine < 1
         ? `&times;${wk.routine.toFixed(4)} routine, on
-           ${Math.round(100 * wk.routineShare)}% of the alerts being this endpoint's own daily
-           traffic at this hour`
+           ${Math.round(100 * wk.routineShare)}% of the alerts being this endpoint's usual
+           traffic at this hour of the day`
         : (wk.baselineMode === "baseline" && wk.chained
             ? `&times;1 no routine discount: a chain is never routine`
             : null),
@@ -893,8 +895,8 @@ function renderFindings(findings) {
             : ""}
         </div>
         <table class="alerts">
-          <thead><tr><th>Rule</th><th>Level</th><th>Fired</th><th>ATT&amp;CK</th>
-            <th>Count</th></tr></thead>
+          <thead><tr><th>Rule</th><th>Level</th><th>Fired</th><th>Endpoint</th>
+            <th>ATT&amp;CK</th><th>Count</th></tr></thead>
           <tbody>${rules}</tbody>
         </table>
       </div></div></div>

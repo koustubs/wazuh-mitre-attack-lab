@@ -610,13 +610,20 @@ else:
     top = max(done or wins, key=lambda w: w['severity']) if wins else None
 
     def rules_in(epoch):
+        # Every endpoint's alerts in the window, each rule with the endpoints that raised it.
+        # The severity beside the table is one endpoint's, and without the names the table
+        # read as though all of it had happened there.
         seen = {}
         for al in buckets[epoch]:
             e = seen.setdefault(al['ruleId'],
                                 {'id': al['ruleId'], 'count': 0, 'level': al['level'],
                                  'desc': al['desc'],
-                                 'tech': ', '.join(al.get('techniques') or [])})
+                                 'tech': ', '.join(al.get('techniques') or []),
+                                 'agents': []})
             e['count'] += 1
+            name = al.get('agent') or ''
+            if name and name not in e['agents']:
+                e['agents'].append(name)
         return sorted(seen.values(), key=lambda e: (-e['level'], -e['count'], e['id']))
 
     detail = rules_in(top['epoch'])[:8] if top is not None else []
@@ -1252,21 +1259,48 @@ h2, h3 { break-after: avoid; page-break-after: avoid; }
         [Security.SecurityElement]::Escape([string]$t)
     }
 
+    $adaptive = $sc.adaptive
     $cards = foreach ($f in $findings) {
         $wk = $f.working
+        $name = if ($wk.agent) { [string]$wk.agent } else { 'one endpoint' }
+        $who = & $esc $name
         $terms = foreach ($c in $wk.components) {
-            '<tr><td>{0}</td><td>{1}</td><td class=n>{2}</td><td class=n>{3:N3}</td><td class=n>x{4:N2}</td><td class=n>{5:N2}</td></tr>' -f
-                (& $esc $c.key), (& $esc $c.label), (& $esc $c.raw), [double]$c.value, [double]$c.weight, [double]$c.contribution
+            # What the reading was divided by, marked m when it was measured on this endpoint.
+            $div = if ($null -eq $c.denominator) { '&mdash;' }
+                   elseif ($c.source -eq 'measured') { '{0} m' -f (& $esc $c.denominator) }
+                   else { & $esc $c.denominator }
+            '<tr><td>{0}</td><td>{1}</td><td class=n>{2}</td><td class=n>{3}</td><td class=n>{4:N3}</td><td class=n>x{5:N2}</td><td class=n>{6:N2}</td></tr>' -f
+                (& $esc $c.key), (& $esc $c.label), (& $esc $c.raw), $div, [double]$c.value, [double]$c.weight, [double]$c.contribution
         }
         $rules = foreach ($r in @($f.rules)) {
-            '<tr><td class=n>{0}</td><td class=n>{1}</td><td>{2}</td><td class=n>{3}</td><td class=n>{4}</td></tr>' -f
-                (& $esc $r.id), [int]$r.level, (& $esc $r.desc), (& $esc $r.tech), [int]$r.count
+            '<tr><td class=n>{0}</td><td class=n>{1}</td><td>{2}</td><td>{3}</td><td class=n>{4}</td><td class=n>{5}</td></tr>' -f
+                (& $esc $r.id), [int]$r.level, (& $esc $r.desc), (& $esc (@($r.agents) -join ', ')), (& $esc $r.tech), [int]$r.count
         }
-        $chain = if ($wk.chained) {
-            'Base {0:N2}, multiplied by {1:N4} because credential access and persistence both appear in this window. Severity {2:N1}.' -f [double]$wk.base, [double]$wk.chain, [double]$wk.score
-        } else {
-            'Base {0:N2}, with no chain multiplier: only one stage is present. Severity {1:N1}.' -f [double]$wk.base, [double]$wk.score
+        # The working the page shows beside the finding, in the same order. The export used to
+        # print base and chain only, so a window the baseline had discounted showed a base, no
+        # multiplier and a lower severity, with nothing to account for the difference.
+        $mode = switch ($wk.baselineMode) {
+            'baseline' { "Scored against {0}'s own baseline, {1} windows deep." -f $name, [int]$wk.baselineWindows }
+            'warming'  { 'Fixed denominators: {0} has {1} of the {2} windows a baseline needs.' -f $name, [int]$wk.baselineWindows, [int]$wk.baselineNeeds }
+            default    { 'Fixed denominators: no baseline is being kept.' }
         }
+        $mult = @(
+            if ($wk.chained) { 'x{0:N4} chain, because credential access and persistence both appear on this endpoint' -f [double]$wk.chain }
+            else { 'x1 no chain: credential access and persistence do not both appear on this endpoint' }
+            if ([double]$wk.novelty -gt 1) {
+                'x{0:N4} novelty, on {1:N0}% of the alerts being signatures this endpoint had produced {2} times or fewer' -f [double]$wk.novelty, (100 * [double]$wk.novelShare), [int]$adaptive.noveltySeen
+            }
+            if ([double]$wk.routine -lt 1) {
+                'x{0:N4} routine, on {1:N0}% of the alerts being this endpoint''s usual traffic at this hour of the day' -f [double]$wk.routine, (100 * [double]$wk.routineShare)
+            } elseif ($wk.baselineMode -eq 'baseline' -and $wk.chained) {
+                'x1 no routine discount: a chain is never routine'
+            }
+        )
+        $peers = @($wk.perAgent)
+        $worst = if ($peers.Count -gt 1) {
+            '<br>Scored per endpoint and led with the worst: ' + (& $esc ((@($peers | ForEach-Object {
+                '{0} {1:N1} ({2} alerts)' -f $_.agent, [double]$_.score, [int]$_.alerts })) -join ', ')) + '.'
+        } else { '' }
             # Stages rather than raw ATT&CK strings, because a stage can be established from a rule
         # id where the alert carries no ATT&CK metadata, and the score already counts it that way.
         $stages = if (@($wk.stages).Count) { (& $esc (@($wk.stages) -join ', ')) } else { 'none identified' }
@@ -1278,18 +1312,18 @@ h2, h3 { break-after: avoid; page-break-after: avoid; }
     <span class="when">$(& $esc $f.at)</span>
     <span class="score">$('{0:N1}' -f [double]$f.severity)</span>
     <span class="band $(& $esc $f.band)">$(& $esc $f.band)</span>
-    <span>$([int]$f.alerts) alerts &middot; model $('{0:N3}' -f [double]$f.score)</span>
+    <span>on $who &middot; $([int]$f.alerts) alerts in the window</span>
   </div>
-  <p class="sub">Stages present: $stages$named</p>
+  <p class="sub">Stages present on ${who}: $stages$named</p>
   <h3>How this score was reached</h3>
   <table>
-    <thead><tr><th>Term</th><th>What it reads</th><th class=n>Raw</th><th class=n>Norm</th><th class=n>Weight</th><th class=n>Points</th></tr></thead>
+    <thead><tr><th>Term</th><th>What it reads</th><th class=n>Raw</th><th class=n>Divided by</th><th class=n>Norm</th><th class=n>Weight</th><th class=n>Points</th></tr></thead>
     <tbody>$($terms -join '')</tbody>
   </table>
-  <p>$chain</p>
-  <h3>What fired in this window</h3>
+  <p>$(& $esc $mode)<br>Base $('{0:N2}' -f [double]$wk.base), then:<br>$($mult -join '<br>')<br>Severity $('{0:N1}' -f [double]$wk.score).$worst</p>
+  <h3>What fired in this window, on every endpoint</h3>
   <table>
-    <thead><tr><th>Rule</th><th class=n>Level</th><th>Description</th><th class=n>ATT&amp;CK</th><th class=n>Count</th></tr></thead>
+    <thead><tr><th>Rule</th><th class=n>Level</th><th>Description</th><th>Endpoint</th><th class=n>ATT&amp;CK</th><th class=n>Count</th></tr></thead>
     <tbody>$($rules -join '')</tbody>
   </table>
 </div>
@@ -1324,17 +1358,25 @@ $($cards -join '')
 <p>The model answers how unusual a window of alerts is, which is not the same as how bad it is.
 Severity is the composite that separates those, and the model is one term inside it. Six terms are
 read off the window, each squashed to a value between 0 and 1, then weighted and added. The total
-is multiplied once if the window contains both credential access and persistence, because that
-pairing is a chain rather than two events, and a chain is what single event rules cannot see.</p>
-<span class="formula">base  = 100 &times; sum of ( weight_i &times; norm_i )
-chain = 1 + $($sc.chainBonus) &times; sqrt(coverage)   when credential access and persistence both appear
-        1                          otherwise
-
-severity = min(100, base &times; chain)</span>
+is multiplied once if one endpoint shows both credential access and persistence, because that
+pairing is a chain rather than two events, and a chain is what single event rules cannot see. A
+window is scored once per endpoint and the worst endpoint is the one reported.</p>
+<span class="formula">base     = 100 &times; sum of ( weight_i &times; norm_i )
+chain    = 1 + $($sc.chainBonus) &times; (0.5 + 0.5 &times; coverage)   when credential access and persistence both appear
+           1                                    otherwise
+severity = min(100, base &times; chain &times; novelty &times; routine)</span>
 <table>
   <thead><tr><th>Term</th><th>What it reads</th><th class=n>Weight</th></tr></thead>
   <tbody>$($weights -join '')</tbody>
 </table>
+<p>Once an endpoint has $([int]$adaptive.warmupWindows) completed windows behind it, four of the six
+divisors are measured on that endpoint instead of fixed, and two multipliers apply. Novelty adds up
+to $('{0:N0}' -f (100 * [double]$adaptive.noveltyBonus))% for alerts whose rule the endpoint had
+produced $([int]$adaptive.noveltySeen) times or fewer. Routine takes off up to
+$('{0:N0}' -f (100 * [double]$adaptive.routineDiscount))% for alerts whose rule it had produced at
+least $([int]$adaptive.routineSeen) times and is producing at about its usual rate for that hour of
+the day. A window holding a chain is never discounted. Until then every divisor is fixed and both
+multipliers are 1.</p>
 <p>The weights are judgement rather than fitted parameters, and they live in one file so that
 disagreeing with them is an edit rather than an argument:
 <code>scoring/scorer/score.py</code>. Bands are informational below 25, then low,
