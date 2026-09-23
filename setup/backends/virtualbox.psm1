@@ -411,7 +411,14 @@ function New-LabVm {
     Invoke-VBox -ThrowOnError -Arguments $modify | Out-Null
 
     if ($Os -eq 'windows') {
-        Invoke-VBox -ThrowOnError -Arguments @('modifyvm', $Name, '--tpm-type', '2.0', '--secure-boot', 'on') | Out-Null
+        # Windows 11 setup wants TPM 2.0 and Secure Boot. modifyvm has no switch for Secure Boot
+        # in VirtualBox 7; it lives in the UEFI variable store, which has to be created and given
+        # keys before it can be turned on.
+        Invoke-VBox -ThrowOnError -Arguments @('modifyvm', $Name, '--tpm-type', '2.0') | Out-Null
+        foreach ($step in @('inituefivarstore', 'enrollmssignatures', 'enrollorclpk')) {
+            Invoke-VBox -ThrowOnError -Arguments @('modifynvram', $Name, $step) | Out-Null
+        }
+        Invoke-VBox -ThrowOnError -Arguments @('modifynvram', $Name, 'secureboot', '--enable') | Out-Null
     }
 
     Invoke-VBox -ThrowOnError -Arguments @(
