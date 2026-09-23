@@ -85,7 +85,24 @@ if [[ ! -r $firewall ]]; then
     exit 1
 fi
 bash "$firewall" >>"$log" 2>&1
-bash wazuh-install.sh -a >>"$log" 2>&1
+# On a host where Hyper-V holds the hardware virtualisation, VirtualBox runs its guests through
+# the Windows Hypervisor Platform, and there the manager once stopped running for 392 seconds
+# while the indexer was starting for the first time. Its clock came back that far ahead, systemd
+# failed the start on its timeout, and the assistant rolled the whole install back. A longer
+# allowance costs nothing where it is not needed. The assistant neither writes nor removes
+# drop-ins, so this one also survives a rollback and applies to the retry.
+mkdir -p /etc/systemd/system/wazuh-indexer.service.d
+printf '[Service]\nTimeoutStartSec=900\n' > /etc/systemd/system/wazuh-indexer.service.d/lab-start-timeout.conf
+# The assistant prints the admin password when it finishes, so its output goes to the root-only
+# log and nothing appears here for the length of the install. Said up front, because a silent
+# terminal reads as a hung one. Ctrl+C is ignored for the same reason: the assistant answers it
+# by asking on stdout whether to roll back, the question lands in the log, and the install then
+# waits for an answer nobody can see. A signal ignored on entry cannot be trapped, so its handler
+# never installs.
+echo 'Installing the Wazuh manager, indexer and dashboard. This takes 10 to 20 minutes and prints'
+echo 'nothing here until it finishes. Ctrl+C is ignored while it runs.'
+echo 'Progress, from a second session: sudo tail -f /var/log/wazuh-install.log'
+( trap '' INT; exec bash wazuh-install.sh -a ) >>"$log" 2>&1
 for package in wazuh-manager wazuh-indexer wazuh-dashboard; do
     [[ $(dpkg-query -W -f='${Version}' "$package") == "$LAB_WAZUH_PKG_VERSION" ]] || { echo "Unexpected $package version." >&2; exit 1; }
 done

@@ -1,13 +1,12 @@
 <#
     The VirtualBox implementation of the backend contract in ..\LabBackend.ps1.
 
-    Read this before relying on it. The read paths have been exercised against VirtualBox 7.2
-    on the machine this lab was built on: Test-LabBackendAvailable, Get-LabVmInfo,
-    Get-LabNetworkInfo and Test-LabNetworkConflict all answer correctly there. The write paths,
-    which create the network and the VMs, have not been run, because that machine runs Hyper-V
-    and the two cannot own the virtualization extensions at the same time. The Hyper-V backend
-    is the one with a built lab behind it. Where the two differ in a way that changes what you
-    get rather than how it is spelled, the comment says so.
+    Read this before relying on it. The lean profile has been built and run on VirtualBox 7.2.6,
+    on a host that also runs Hyper-V, where VirtualBox goes through the Windows Hypervisor
+    Platform rather than the virtualization extensions. The Windows endpoint has not been built
+    on this backend; its TPM and Secure Boot settings were checked on a throwaway VM only. Where
+    the two backends differ in a way that changes the result rather than the spelling, the
+    comment says so.
 
     Three differences are real rather than cosmetic:
 
@@ -173,9 +172,16 @@ function Get-LabVmInfo {
     # Uptime is reported as the moment the VM last changed state, not as a duration, and only
     # while it is running. Anywhere else this would be an approximation; here the VM only leaves
     # the running state by being stopped, so the two are the same thing.
+    #
+    # The time is UTC but carries no zone marker. Parsed plainly it came back as local time and was
+    # shifted by the host's offset on the way to UTC, so on a host at UTC+5:30 every VM read five
+    # and a half hours older than it was.
     $uptime = $null
     if ($state -eq 'Running' -and $props.ContainsKey('VMStateChangeTime')) {
-        try { $uptime = [datetime]::UtcNow - ([datetime]::Parse($props['VMStateChangeTime'])).ToUniversalTime() } catch { }
+        try {
+            $utc = [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
+            $uptime = [datetime]::UtcNow - [datetime]::Parse($props['VMStateChangeTime'], [Globalization.CultureInfo]::InvariantCulture, $utc)
+        } catch { }
     }
 
     [ordered]@{

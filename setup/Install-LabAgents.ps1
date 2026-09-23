@@ -85,6 +85,26 @@ function Invoke-Ssh {
     & ssh.exe @sshArgs
 }
 
+function Invoke-Scp {
+    <#
+        Runs scp and leaves its exit code in $LASTEXITCODE.
+
+        With $ErrorActionPreference at Stop, Windows PowerShell 5.1 turns the first stderr line
+        from a redirected native command into a terminating error. A key that was not there
+        ended the script at the copy with scp's own "No such file or directory", and the message
+        below it that names the missing step never ran. Enable-LabDashboard.ps1 carries the same
+        fix as Invoke-Native.
+    #>
+    param([Parameter(Mandatory)][string[]]$Arguments)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & scp.exe @ssh @Arguments 2>&1 | Out-Null
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 try {
     Write-Host ("Enrolling {0} endpoint(s) against the manager at {1}." -f $endpoints.Count, $manager.Address)
     Write-Host ''
@@ -97,7 +117,7 @@ try {
         # 1. The key, from where configure-manager.sh left a copy the lab account can read.
         $localKey = Join-Path $staging ($agent + '.key')
         $remoteKey = ('{0}@{1}:~/wazuh-lab-keys/{2}.key' -f $user, $manager.Address, $agent)
-        & scp.exe @ssh $remoteKey $localKey 2>&1 | Out-Null
+        Invoke-Scp -Arguments @($remoteKey, $localKey)
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $localKey)) {
             Write-Host ("  could not collect the key. Has manager\configure-manager.sh been run?") -ForegroundColor Red
             $failed += $endpoint.Name
@@ -146,7 +166,7 @@ try {
             (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot $_)).Path
         })
 
-        & scp.exe @ssh @payload $localKey ('{0}@{1}:{2}' -f $user, $endpoint.Address, $remoteDir) 2>&1 | Out-Null
+        Invoke-Scp -Arguments (@($payload) + @($localKey, ('{0}@{1}:{2}' -f $user, $endpoint.Address, $remoteDir)))
         if ($LASTEXITCODE -ne 0) {
             Write-Host '  could not copy the installer across. Is the endpoint up and reachable over SSH?' -ForegroundColor Red
             $failed += $endpoint.Name

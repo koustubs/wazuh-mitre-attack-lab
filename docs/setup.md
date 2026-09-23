@@ -184,6 +184,15 @@ worse than not installing it. Tuning failures leave the completed Wazuh installa
 and print that tuning is incomplete. Re-run `sudo bash manager/tune-manager.sh` after resolving
 the reported error. Its `configure-retention.py` helper must remain beside it.
 
+The install prints nothing for 10 to 20 minutes. The installation assistant's output includes
+the indexer admin password, so it goes to the root-only `/root/wazuh-lab-install/install.log`.
+Progress can be followed from a second session with `sudo tail -f /var/log/wazuh-install.log`,
+which carries no password. Ctrl+C is ignored while the assistant runs, because it answers an
+interrupt with a question on the output that goes to the log. If the assistant fails partway it
+removes what it installed, and the script can be run again. The indexer is given 15 minutes to
+start, since a guest under VirtualBox on a host that also runs Hyper-V was seen to stall for six
+and a half minutes during that start.
+
 Retention waits for yellow cluster health, retries temporary ISM failures, and reads back the
 policy attachments before reporting success. A failed lookup or attachment returns a nonzero
 status rather than being reported as an index with nothing to do.

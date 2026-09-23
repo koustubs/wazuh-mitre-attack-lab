@@ -788,24 +788,32 @@ try {
     $rulePath = Join-Path $PSScriptRoot '..\manager\lab_rules.xml'
     if (Test-Path -LiteralPath $rulePath) {
         [xml]$ruleDoc = Get-Content -LiteralPath $rulePath -Raw
+        # Through GetAttribute and SelectSingleNode, not as properties. The setup libraries this
+        # file dot-sources turn on strict mode, and under it a property read of an element or
+        # attribute a rule does not have throws. The first rule in the file has no <mitre> block,
+        # so this list was always empty and the coverage panel reported the file as unreadable
+        # on every lab.
         foreach ($rule in $ruleDoc.SelectNodes('//rule')) {
+            $descNode = $rule.SelectSingleNode('description')
+            $techNode = $rule.SelectSingleNode('mitre/id')
             # Descriptions carry field placeholders like $(win.eventdata.targetUserName), which
             # read badly in a table. Keep the field name, drop the plumbing around it.
-            $desc = [regex]::Replace([string]$rule.description, '\$\(([^)]*)\)', {
+            $desc = [regex]::Replace($(if ($descNode) { $descNode.InnerText } else { '' }), '\$\(([^)]*)\)', {
                 param($m) '<' + (($m.Groups[1].Value -split '\.')[-1]) + '>'
             })
             $script:LabRules += [ordered]@{
-                id          = [string]$rule.id
-                level       = [int]$rule.level
+                id          = $rule.GetAttribute('id')
+                level       = [int]$rule.GetAttribute('level')
                 description = $desc.Trim()
-                technique   = [string]$rule.mitre.id
-                frequency   = [string]$rule.frequency
-                timeframe   = [string]$rule.timeframe
+                technique   = $(if ($techNode) { $techNode.InnerText } else { '' })
+                frequency   = $rule.GetAttribute('frequency')
+                timeframe   = $rule.GetAttribute('timeframe')
             }
         }
     }
 } catch {
     # A malformed rule file is worth knowing about, but not worth refusing to start over.
+    Write-Warning ('Coverage panel disabled, the rule file did not load: {0}' -f $_.Exception.Message)
     $script:LabRules = @()
 }
 
@@ -1079,8 +1087,9 @@ function Invoke-LabScenario {
 function Format-Uptime {
     param($Span)
     if ($null -eq $Span -or $Span.TotalSeconds -lt 1) { return $null }
-    if ($Span.TotalDays -ge 1)  { return ('{0}d {1}h' -f [int]$Span.TotalDays, $Span.Hours) }
-    if ($Span.TotalHours -ge 1) { return ('{0}h {1}m' -f [int]$Span.TotalHours, $Span.Minutes) }
+    # Floor, not [int], which rounds: 5 h 32 min came out as "6h 32m".
+    if ($Span.TotalDays -ge 1)  { return ('{0}d {1}h' -f [math]::Floor($Span.TotalDays), $Span.Hours) }
+    if ($Span.TotalHours -ge 1) { return ('{0}h {1}m' -f [math]::Floor($Span.TotalHours), $Span.Minutes) }
     return ('{0}m' -f [int]$Span.TotalMinutes)
 }
 
@@ -1855,7 +1864,9 @@ while ($running -and $listener.IsListening) {
         if ($path -eq '') { $path = '/' }
 
         if ($path -eq '/' -and $request.HttpMethod -eq 'GET') {
-            $html = (Get-Content -LiteralPath $pagePath -Raw) -replace '__LAB_TOKEN__', $token
+            # UTF-8 said explicitly. Windows PowerShell reads a file without a byte order mark in the
+            # ANSI code page, and the page's separators and dashes arrived as two characters each.
+            $html = (Get-Content -LiteralPath $pagePath -Raw -Encoding UTF8) -replace '__LAB_TOKEN__', $token
             Write-Reply -Response $response -Body $html -ContentType 'text/html; charset=utf-8'
             continue
         }
